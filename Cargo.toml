@@ -1,0 +1,7 @@
+[package]
+name = "seq-align"
+version = "0.1.0"
+authors = ["Jinzhou Zhang <zhangjinzhou@4paradigm.com>"]
+edition = "2018"
+
+[dependencies]
