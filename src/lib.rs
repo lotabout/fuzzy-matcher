@@ -266,6 +266,11 @@ fn match_bonus(
         score += 1;
     }
 
+    // Bonus: case match
+    if pat_ch == line_ch {
+        score += 1;
+    }
+
     // Bonus: case matches, or a Head in the pattern aligns with one in the word.
     if (pat_ch == line_ch && (pat_ch.is_ascii_uppercase() || pat_idx == line_idx))
         || (pat_role == CharRole::Head && line_role == CharRole::Head)
@@ -362,6 +367,7 @@ mod tests {
     }
 
     fn filter_and_sort(pattern: &str, lines: Vec<&'static str>) -> Vec<&'static str> {
+        use std::collections::HashMap;
         let scores: Vec<Option<i64>> = lines.iter().map(|k| fuzzy_match(k, pattern)).collect();
         println!("{:?}: {:?}, pattern: {}", scores, lines, pattern);
 
