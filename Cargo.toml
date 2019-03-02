@@ -1,5 +1,5 @@
 [package]
-name = "seq-align"
+name = "fuzzy-matcher"
 version = "0.1.0"
 authors = ["Jinzhou Zhang <zhangjinzhou@4paradigm.com>"]
 edition = "2018"
