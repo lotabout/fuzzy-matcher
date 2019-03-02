@@ -367,13 +367,13 @@ mod tests {
     }
 
     fn filter_and_sort(pattern: &str, lines: Vec<&'static str>) -> Vec<&'static str> {
-        use std::collections::HashMap;
-        let scores: Vec<Option<i64>> = lines.iter().map(|k| fuzzy_match(k, pattern)).collect();
-        println!("{:?}: {:?}, pattern: {}", scores, lines, pattern);
-
-        let mut lines = lines;
-        lines.sort_by_key(|k| -fuzzy_match(k, pattern).unwrap_or(-(1 << 10)));
-        lines
+        let mut lines_with_score: Vec<(i64, &'static str)> = lines.into_iter()
+            .map(|s| (fuzzy_match(s, pattern).unwrap_or(-(1<<62)), s))
+            .collect();
+        lines_with_score.sort_by_key(|(score, string)| -score);
+        lines_with_score.into_iter()
+            .map(|(_, string)| string)
+            .collect()
     }
 
     fn wrap_fuzzy_match(line: &str, pattern: &str) -> Option<String> {
