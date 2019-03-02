@@ -60,7 +60,7 @@ pub fn fuzzy_indices(line: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
     }
 
     indices_reverse.reverse();
-    Some((score as i64, indices_reverse))
+    Some((adjust_score(score, num_line_chars), indices_reverse))
 }
 
 /// fuzzy match `line` with `pattern`, returning the score(the larger the better) on match
@@ -77,12 +77,13 @@ pub fn fuzzy_match(line: &str, pattern: &str) -> Option<i64> {
     let cell = dp[num_pattern_chars & 1][num_line_chars];
     let score = max(cell.match_score, cell.miss_score);
 
-    Some(score)
+    Some(adjust_score(score, num_line_chars))
 }
 
 // checkout https://github.com/llvm-mirror/clang-tools-extra/blob/master/clangd/FuzzyMatch.cpp
 // for the description
 fn build_graph(line: &str, pattern: &str, compressed: bool) -> Vec<Vec<Score>> {
+    //    println!("build graph for {}, {}", pattern, line);
     let num_line_chars = line.chars().count();
     let num_pattern_chars = pattern.chars().count();
     let max_rows = if compressed { 2 } else { num_pattern_chars + 1 };
@@ -128,8 +129,8 @@ fn build_graph(line: &str, pattern: &str, compressed: bool) -> Vec<Vec<Score>> {
             let mut match_miss_score = pre_miss.match_score;
             let mut miss_miss_score = pre_miss.miss_score;
             if pat_idx < num_pattern_chars - 1 {
-                match_miss_score -= skip_penalty(pat_idx, pat_ch, Action::Match);
-                miss_miss_score -= skip_penalty(pat_idx, pat_ch, Action::Miss);
+                match_miss_score -= skip_penalty(line_idx, line_ch, Action::Match);
+                miss_miss_score -= skip_penalty(line_idx, line_ch, Action::Miss);
             }
 
             let (miss_score, last_action_miss) = if match_miss_score > miss_miss_score {
@@ -193,6 +194,16 @@ fn build_graph(line: &str, pattern: &str, compressed: bool) -> Vec<Vec<Score>> {
     dp
 }
 
+fn adjust_score(score: i64, num_line_chars: usize) -> i64 {
+    // line width will affect 10 scores
+    println!(
+        "score: {}, {}",
+        score,
+        (((num_line_chars + 1) as f64).ln().floor() as i64)
+    );
+    score - (((num_line_chars + 1) as f64).ln().floor() as i64)
+}
+
 fn cheap_matches(line: &str, pattern: &str) -> bool {
     let mut line_iter = line.chars().peekable();
     let mut pat_iter = pattern.chars().peekable();
@@ -235,13 +246,19 @@ impl Default for Score {
     }
 }
 
-fn skip_penalty(_ch_idx: usize, _ch: char, last_action: Action) -> i64 {
+fn skip_penalty(_ch_idx: usize, ch: char, last_action: Action) -> i64 {
+    let mut score = 1;
     if last_action == Action::Match {
         // Non-consecutive match.
-        return 2;
-    } else {
-        return 0;
+        score += 3;
     }
+
+    if char_type_of(ch) == CharType::Separ {
+        // skip separator
+        score += 6;
+    }
+
+    score
 }
 
 fn allow_match(pat_ch: char, line_ch: char, _last_action: Action) -> bool {
@@ -257,46 +274,55 @@ fn match_bonus(
     line_prev_ch: char,
     last_action: Action,
 ) -> i64 {
-    let mut score = 1;
+    let mut score = 10;
     let pat_role = char_role(pat_prev_ch, pat_ch);
     let line_role = char_role(line_prev_ch, line_ch);
+    //    println!("bonus for pat {}/{}, line {}/{}", pat_ch, pat_idx, line_ch, line_idx);
 
     // Bonus: pattern so far is a (case-insensitive) prefix of the word.
     if pat_idx == line_idx {
-        score += 1;
+        score += 10;
     }
 
     // Bonus: case match
     if pat_ch == line_ch {
-        score += 1;
+        //        println!("2");
+        score += 8;
     }
 
-    // Bonus: case matches, or a Head in the pattern aligns with one in the word.
-    if (pat_ch == line_ch && (pat_ch.is_ascii_uppercase() || pat_idx == line_idx))
-        || (pat_role == CharRole::Head && line_role == CharRole::Head)
-    {
-        score += 1;
+    // Bonus: match header
+    if line_role == CharRole::Head {
+        score += 9;
+    }
+
+    // Bonus: a Head in the pattern aligns with one in the word.
+    if pat_role == CharRole::Head && line_role == CharRole::Head {
+        //        println!("3");
+        score += 10;
     }
 
     // Penalty: matching inside a segment (and previous char wasn't matched).
     if line_role == CharRole::Tail && pat_idx > 0 && last_action == Action::Miss {
-        score -= 3;
+        //        println!("4");
+        score -= 30;
     }
 
     // Penalty: a Head in the pattern matches in the middle of a word segment.
     if pat_role == CharRole::Head && line_role == CharRole::Tail {
-        score -= 1;
+        //        println!("5");
+        score -= 10;
     }
 
     // Penalty: matching the first pattern character in the middle of a segment.
     if pat_idx == 0 && line_role == CharRole::Tail {
-        score -= 4;
+        //        println!("6");
+        score -= 40;
     }
 
     score
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum CharType {
     Empty,
     Lower,
@@ -366,12 +392,14 @@ mod tests {
         ret
     }
 
-    fn filter_and_sort(pattern: &str, lines: Vec<&'static str>) -> Vec<&'static str> {
-        let mut lines_with_score: Vec<(i64, &'static str)> = lines.into_iter()
-            .map(|s| (fuzzy_match(s, pattern).unwrap_or(-(1<<62)), s))
+    fn filter_and_sort(pattern: &str, lines: &[&'static str]) -> Vec<&'static str> {
+        let mut lines_with_score: Vec<(i64, &'static str)> = lines
+            .into_iter()
+            .map(|&s| (fuzzy_match(s, pattern).unwrap_or(-(1 << 62)), s))
             .collect();
-        lines_with_score.sort_by_key(|(score, string)| -score);
-        lines_with_score.into_iter()
+        lines_with_score.sort_by_key(|(score, _)| -score);
+        lines_with_score
+            .into_iter()
             .map(|(_, string)| string)
             .collect()
     }
@@ -379,6 +407,23 @@ mod tests {
     fn wrap_fuzzy_match(line: &str, pattern: &str) -> Option<String> {
         let (_score, indices) = fuzzy_indices(line, pattern)?;
         Some(wrap_matches(line, &indices))
+    }
+
+    fn assert_order(pattern: &str, choices: &[&'static str]) {
+        let result = filter_and_sort(pattern, choices);
+
+        if result != choices {
+            // debug print
+            for &choice in choices.iter() {
+                if let Some((score, indices)) = fuzzy_indices(choice, pattern) {
+                    println!("{}: {:?}", score, wrap_matches(choice, &indices));
+                } else {
+                    println!("NO MATCH for {}", choice);
+                }
+            }
+        }
+
+        assert_eq!(result, choices);
     }
 
     #[test]
@@ -398,9 +443,37 @@ mod tests {
 
     #[test]
     fn test_match_quality() {
-        let choices1 = vec!["Monad", "mONAD", "monad"];
-        let sorted1 = filter_and_sort("monad", choices1);
-        assert_eq!(sorted1, ["monad", "Monad", "mONAD"]);
+        // case
+        assert_order("monad", &["monad", "Monad", "mONAD"]);
+
+        // initials
+        assert_order("ab", &["ab", "aoo_boo", "acb"]);
+        assert_order("CC", &["CamelCase", "camelCase", "camelcase"]);
+        assert_order("cC", &["camelCase", "CamelCase", "camelcase"]);
+        assert_order(
+            "cc",
+            &[
+                "camel case",
+                "camelCase",
+                "camelcase",
+                "CamelCase",
+                "camel ace",
+            ],
+        );
+        assert_order(
+            "Da.Te",
+            &["Data.Text", "Data.Text.Lazy", "Data.Aeson.Encoding.text"],
+        );
+        assert_order("foo bar.h", &["foo/bar.h", "foobar.h"]);
+        // prefix
+        assert_order("is", &["isIEEE", "inSuf"]);
+        // shorter
+        assert_order("ma", &["map", "many", "maximum"]);
+        assert_order("print", &["printf", "sprintf"]);
+        // score(PRINT) = kMinScore
+        assert_order("ast", &["ast", "AST", "INT_FAST16_MAX"]);
+        // score(PRINT) > kMinScore
+        assert_order("Int", &["int", "INT", "PRINT"]);
     }
 }
 
