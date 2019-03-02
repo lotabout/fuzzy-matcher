@@ -5,3 +5,6 @@ authors = ["Jinzhou Zhang <zhangjinzhou@4paradigm.com>"]
 edition = "2018"
 
 [dependencies]
+
+[dev-dependencies]
+termion = "1.5.1"

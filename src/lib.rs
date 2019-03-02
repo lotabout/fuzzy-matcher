@@ -28,7 +28,6 @@ pub fn fuzzy_indices(line: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
     let num_line_chars = line.chars().count();
 
     let dp = build_graph(line, pattern, false);
-    //print_dp(line, pattern, &dp);
 
     // search backwards for the matched indices
     let mut indices_reverse = Vec::new();
@@ -83,7 +82,6 @@ pub fn fuzzy_match(line: &str, pattern: &str) -> Option<i64> {
 // checkout https://github.com/llvm-mirror/clang-tools-extra/blob/master/clangd/FuzzyMatch.cpp
 // for the description
 fn build_graph(line: &str, pattern: &str, compressed: bool) -> Vec<Vec<Score>> {
-    //    println!("build graph for {}, {}", pattern, line);
     let num_line_chars = line.chars().count();
     let num_pattern_chars = pattern.chars().count();
     let max_rows = if compressed { 2 } else { num_pattern_chars + 1 };
@@ -196,11 +194,6 @@ fn build_graph(line: &str, pattern: &str, compressed: bool) -> Vec<Vec<Score>> {
 
 fn adjust_score(score: i64, num_line_chars: usize) -> i64 {
     // line width will affect 10 scores
-    println!(
-        "score: {}, {}",
-        score,
-        (((num_line_chars + 1) as f64).ln().floor() as i64)
-    );
     score - (((num_line_chars + 1) as f64).ln().floor() as i64)
 }
 
@@ -277,7 +270,6 @@ fn match_bonus(
     let mut score = 10;
     let pat_role = char_role(pat_prev_ch, pat_ch);
     let line_role = char_role(line_prev_ch, line_ch);
-    //    println!("bonus for pat {}/{}, line {}/{}", pat_ch, pat_idx, line_ch, line_idx);
 
     // Bonus: pattern so far is a (case-insensitive) prefix of the word.
     if pat_idx == line_idx {
@@ -286,7 +278,6 @@ fn match_bonus(
 
     // Bonus: case match
     if pat_ch == line_ch {
-        //        println!("2");
         score += 8;
     }
 
@@ -297,25 +288,21 @@ fn match_bonus(
 
     // Bonus: a Head in the pattern aligns with one in the word.
     if pat_role == CharRole::Head && line_role == CharRole::Head {
-        //        println!("3");
         score += 10;
     }
 
     // Penalty: matching inside a segment (and previous char wasn't matched).
     if line_role == CharRole::Tail && pat_idx > 0 && last_action == Action::Miss {
-        //        println!("4");
         score -= 30;
     }
 
     // Penalty: a Head in the pattern matches in the middle of a word segment.
     if pat_role == CharRole::Head && line_role == CharRole::Tail {
-        //        println!("5");
         score -= 10;
     }
 
     // Penalty: matching the first pattern character in the middle of a segment.
     if pat_idx == 0 && line_role == CharRole::Tail {
-        //        println!("6");
         score -= 40;
     }
 
