@@ -1,7 +1,7 @@
-use std::io::{self, BufRead};
+use fuzzy_matcher::skim::fuzzy_indices;
 use std::env;
+use std::io::{self, BufRead};
 use std::process::exit;
-use fuzzy_matcher::fuzzy_indices;
 use termion::style::{Invert, Reset};
 
 pub fn main() {
