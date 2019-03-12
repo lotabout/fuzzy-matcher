@@ -19,7 +19,9 @@
 use std::cmp::max;
 use crate::util::*;
 
-const BONUS_UPPER_MATCH: i64 = 10;
+const BONUS_MATCHED: i64 = 4;
+const BONUS_CASE_MATCH: i64 = 4;
+const BONUS_UPPER_MATCH: i64 = 6;
 const BONUS_ADJACENCY: i64 = 10;
 const BONUS_SEPARATOR: i64 = 8;
 const BONUS_CAMEL: i64 = 8;
@@ -93,15 +95,15 @@ impl Default for MatchingStatus {
 fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> {
     let mut scores = vec![];
 
-    let mut prev_matched_idx = -1; // to ensure that the pushed char are able to match the pattern
+    let mut match_start_idx = 0; // to ensure that the pushed char are able to match the pattern
     let mut pat_prev_ch = '\0';
 
     // initialize the match positions and inline scores
-    for (pat_idx, pat_ch) in pattern.chars().map(|c| c.to_ascii_lowercase()).enumerate() {
+    for (pat_idx, pat_ch) in pattern.chars().enumerate() {
         let mut vec = vec![];
         let mut choice_prev_ch = '\0';
-        for (idx, ch) in choice.chars().map(|c| c.to_ascii_lowercase()).enumerate() {
-            if ch == pat_ch && (idx as i64) > prev_matched_idx {
+        for (idx, ch) in choice.chars().enumerate() {
+            if ch.to_ascii_lowercase() == pat_ch.to_ascii_lowercase() && idx >= match_start_idx {
                 let score = fuzzy_score(ch, idx, choice_prev_ch, pat_ch, pat_idx, pat_prev_ch);
                 vec.push(MatchingStatus {
                     idx,
@@ -118,7 +120,7 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
             // not matched
             return None;
         }
-        prev_matched_idx = vec[0].idx as i64;
+        match_start_idx = vec[0].idx + 1;
         scores.push(vec);
         pat_prev_ch = pat_ch;
     }
@@ -194,33 +196,29 @@ fn fuzzy_score(
     pat_idx: usize,
     _pat_prev_ch: char,
 ) -> i64 {
-    let mut score = 0;
+    let mut score = BONUS_MATCHED;
 
     let choice_prev_ch_type = char_type_of(choice_prev_ch);
+    let choice_role = char_role(choice_prev_ch, choice_ch);
 
-    if pat_ch == choice_ch && pat_ch.is_uppercase() {
-        score += BONUS_UPPER_MATCH;
+    if pat_ch == choice_ch {
+        if pat_ch.is_uppercase() {
+            score += BONUS_UPPER_MATCH;
+        } else {
+            score += BONUS_CASE_MATCH;
+        }
     } else {
         score += PENALTY_CASE_UNMATCHED;
     }
 
-    if choice_idx == 0 {
-        return score
-            + if choice_ch.is_uppercase() {
-                BONUS_CAMEL
-            } else {
-                0
-            };
+    // apply bonus for camelCases
+    if choice_role == CharRole::Head {
+        score += BONUS_CAMEL;
     }
 
     // apply bonus for matches after a separator
     if choice_prev_ch_type == CharType::Separ {
         score += BONUS_SEPARATOR;
-    }
-
-    // apply bonus for camelCases
-    if choice_prev_ch.is_lowercase() && choice_ch.is_uppercase() {
-        score += BONUS_CAMEL;
     }
 
     if pat_idx == 0 {
@@ -271,6 +269,7 @@ mod tests {
 
         if result != choices {
             // debug print
+            println!("pattern: {}", pattern);
             for &choice in choices.iter() {
                 if let Some((score, indices)) = fuzzy_indices(choice, pattern) {
                     println!("{}: {:?}", score, wrap_matches(choice, &indices));
