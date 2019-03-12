@@ -1,6 +1,6 @@
 # Fuzzy Matcher
 
-A fuzzy matching algorithm in Rust!
+Fuzzy matching algorithm(s) in Rust!
 
 ## Usage
 
@@ -14,7 +14,7 @@ fuzzy_matcher = "*"
 Here are some code example:
 
 ```rust
-use fuzzy_matcher::{fuzzy_match, fuzzy_matcher};
+use fuzzy_matcher::skim::{fuzzy_match, fuzzy_matcher};
 
 assert_eq!(None, fuzzy_match("abc", "abx"));
 assert!(fuzzy_match("axbycz", "abc").is_some());
@@ -31,9 +31,16 @@ assert_eq!(indices, [0, 2, 4]);
 
 ## More example
 
-`echo "axbycz" | cargo run --example "abc"` and check what happens.
+`echo "axbycz" | cargo run --example fz "abc"` and check what happens.
 
 ## About the Algorithm
+
+### Skim
+
+The skim is currently used by [skim](https://github.com/lotabout/skim), a
+fuzzy finder.
+
+### Clangd
 
 - The algorithm is based on [clangd's FuzzyMatch.cpp](https://github.com/MaskRay/ccls/blob/master/src/fuzzy_match.cc).
 - Also checkout https://github.com/lewang/flx/issues/98 for some variants.
