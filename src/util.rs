@@ -56,8 +56,8 @@ pub enum CharRole {
 // Prev=Upper 0x00, 0x55, 0x59, 0xff, // Ditto, but U(U)U->Tail
 // Prev=Separ 0x00, 0xaa, 0xaa, 0xff, // After separator, like at start
 pub fn char_role(prev: char, cur: char) -> CharRole {
-    use CharRole::*;
-    use CharType::*;
+    use self::CharRole::*;
+    use self::CharType::*;
     match (char_type_of(prev), char_type_of(cur)) {
         (Empty, Lower) | (Empty, Upper) | (Lower, Upper) | (Separ, Lower) | (Separ, Upper) => Head,
         _ => Tail,
