@@ -1,3 +1,5 @@
+[![Crates.io](https://img.shields.io/crates/v/fuzzy-matcher.svg)](https://crates.io/crates/fuzzy-matcher)
+
 # Fuzzy Matcher
 
 Fuzzy matching algorithm(s) in Rust!
