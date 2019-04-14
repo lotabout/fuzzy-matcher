@@ -3,7 +3,7 @@
 ///
 ///! # Example:
 ///! ```edition2018
-///! use fuzzy_matcher::skim::{fuzzy_match, fuzzy_matcher};
+///! use fuzzy_matcher::skim::{fuzzy_match, fuzzy_indices};
 ///!
 ///! assert_eq!(None, fuzzy_match("abc", "abx"));
 ///! assert!(fuzzy_match("axbycz", "abc").is_some());
