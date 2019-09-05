@@ -10,7 +10,7 @@ In your Cargo.toml add the following:
 
 ```toml
 [dependencies]
-fuzzy_matcher = "*"
+fuzzy-matcher = "*"
 ```
 
 Here are some code example:
