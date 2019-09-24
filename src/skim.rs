@@ -332,5 +332,6 @@ mod tests {
         assert_order("ast", &["ast", "AST", "INT_FAST16_MAX"]);
         // score(PRINT) > kMinScore
         assert_order("Int", &["int", "INT", "PRINT"]);
+        assert_order("skim", &["Code/External/skim", "Code/External/skim/man"]);
     }
 }
