@@ -99,7 +99,7 @@ fn build_graph(line: &str, pattern: &str, compressed: bool) -> Vec<Vec<Score>> {
     // first line
     for (idx, ch) in line.chars().enumerate() {
         dp[0][idx + 1] = Score {
-            miss_score: &dp[0][idx].miss_score - skip_penalty(idx, ch, Action::Miss),
+            miss_score: dp[0][idx].miss_score - skip_penalty(idx, ch, Action::Miss),
             last_action_miss: Action::Miss,
             match_score: AWFUL_SCORE,
             last_action_match: Action::Miss,
@@ -410,10 +410,9 @@ fn print_dp(line: &str, pattern: &str, dp: &[Vec<Score>]) {
         print!("\t\t{}/{}", idx + 1, ch);
     }
 
-    for row in 0..(num_pattern_chars + 1) {
-        print!("\n{}\t", row);
-        for col in 0..(num_line_chars + 1) {
-            let cell = &dp[row][col];
+    for (row_num, row) in dp.iter().enumerate().take(num_pattern_chars + 1) {
+        print!("\n{}\t", row_num);
+        for cell in row.iter().take(num_line_chars + 1) {
             print!(
                 "({},{})/({},{})\t",
                 cell.miss_score,
