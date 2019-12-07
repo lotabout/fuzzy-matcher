@@ -91,7 +91,7 @@ pub fn assert_order(matcher: &dyn FuzzyMatcher, pattern: &str, choices: &[&'stat
 }
 
 #[allow(dead_code)]
-fn filter_and_sort(
+pub fn filter_and_sort(
     matcher: &dyn FuzzyMatcher,
     pattern: &str,
     lines: &[&'static str],
@@ -108,7 +108,7 @@ fn filter_and_sort(
 }
 
 #[allow(dead_code)]
-fn wrap_matches(line: &str, indices: &[usize]) -> String {
+pub fn wrap_matches(line: &str, indices: &[usize]) -> String {
     let mut ret = String::new();
     let mut peekable = indices.iter().peekable();
     for (idx, ch) in line.chars().enumerate() {

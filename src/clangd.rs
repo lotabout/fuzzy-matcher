@@ -3,13 +3,16 @@
 ///!
 ///! # Example:
 ///! ```edition2018
-///! use fuzzy_matcher::clangd::{fuzzy_match, fuzzy_indices};
+///! use fuzzy_matcher::FuzzyMatcher;
+///! use fuzzy_matcher::clangd::ClangdMatcher;
 ///!
-///! assert_eq!(None, fuzzy_match("abc", "abx"));
-///! assert!(fuzzy_match("axbycz", "abc").is_some());
-///! assert!(fuzzy_match("axbycz", "xyz").is_some());
+///! let matcher = ClangdMatcher::default();
 ///!
-///! let (score, indices) = fuzzy_indices("axbycz", "abc").unwrap();
+///! assert_eq!(None, matcher.fuzzy_match("abc", "abx"));
+///! assert!(matcher.fuzzy_match("axbycz", "abc").is_some());
+///! assert!(matcher.fuzzy_match("axbycz", "xyz").is_some());
+///!
+///! let (score, indices) = matcher.fuzzy_indices("axbycz", "abc").unwrap();
 ///! assert_eq!(indices, [0, 2, 4]);
 ///!
 ///! ```
@@ -18,7 +21,26 @@
 ///! https://github.com/llvm-mirror/clang-tools-extra/blob/master/clangd/FuzzyMatch.cpp
 ///! Also check: https://github.com/lewang/flx/issues/98
 use crate::util::*;
+use crate::FuzzyMatcher;
 use std::cmp::max;
+
+pub struct ClangdMatcher {}
+
+impl Default for ClangdMatcher {
+    fn default() -> Self {
+        Self {}
+    }
+}
+
+impl FuzzyMatcher for ClangdMatcher {
+    fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
+        fuzzy_indices(choice, pattern)
+    }
+
+    fn fuzzy_match(&self, choice: &str, pattern: &str) -> Option<i64> {
+        fuzzy_match(choice, pattern)
+    }
+}
 
 /// fuzzy match `line` with `pattern`, returning the score and indices of matches
 pub fn fuzzy_indices(line: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
@@ -299,54 +321,11 @@ fn match_bonus(
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn wrap_matches(line: &str, indices: &[usize]) -> String {
-        let mut ret = String::new();
-        let mut peekable = indices.iter().peekable();
-        for (idx, ch) in line.chars().enumerate() {
-            let next_id = **peekable.peek().unwrap_or(&&line.len());
-            if next_id == idx {
-                ret.push_str(format!("[{}]", ch).as_str());
-                peekable.next();
-            } else {
-                ret.push(ch);
-            }
-        }
-
-        ret
-    }
-
-    fn filter_and_sort(pattern: &str, lines: &[&'static str]) -> Vec<&'static str> {
-        let mut lines_with_score: Vec<(i64, &'static str)> = lines
-            .into_iter()
-            .map(|&s| (fuzzy_match(s, pattern).unwrap_or(-(1 << 62)), s))
-            .collect();
-        lines_with_score.sort_by_key(|(score, _)| -score);
-        lines_with_score
-            .into_iter()
-            .map(|(_, string)| string)
-            .collect()
-    }
+    use crate::util::{assert_order, wrap_matches};
 
     fn wrap_fuzzy_match(line: &str, pattern: &str) -> Option<String> {
         let (_score, indices) = fuzzy_indices(line, pattern)?;
         Some(wrap_matches(line, &indices))
-    }
-
-    fn assert_order(pattern: &str, choices: &[&'static str]) {
-        let result = filter_and_sort(pattern, choices);
-
-        if result != choices {
-            // debug print
-            for &choice in choices.iter() {
-                if let Some((score, indices)) = fuzzy_indices(choice, pattern) {
-                    println!("{}: {:?}", score, wrap_matches(choice, &indices));
-                } else {
-                    println!("NO MATCH for {}", choice);
-                }
-            }
-        }
-
-        assert_eq!(result, choices);
     }
 
     #[test]
@@ -366,14 +345,16 @@ mod tests {
 
     #[test]
     fn test_match_quality() {
+        let matcher = ClangdMatcher::default();
         // case
-        assert_order("monad", &["monad", "Monad", "mONAD"]);
+        assert_order(&matcher, "monad", &["monad", "Monad", "mONAD"]);
 
         // initials
-        assert_order("ab", &["ab", "aoo_boo", "acb"]);
-        assert_order("CC", &["CamelCase", "camelCase", "camelcase"]);
-        assert_order("cC", &["camelCase", "CamelCase", "camelcase"]);
+        assert_order(&matcher, "ab", &["ab", "aoo_boo", "acb"]);
+        assert_order(&matcher, "CC", &["CamelCase", "camelCase", "camelcase"]);
+        assert_order(&matcher, "cC", &["camelCase", "CamelCase", "camelcase"]);
         assert_order(
+            &matcher,
             "cc",
             &[
                 "camel case",
@@ -384,19 +365,20 @@ mod tests {
             ],
         );
         assert_order(
+            &matcher,
             "Da.Te",
             &["Data.Text", "Data.Text.Lazy", "Data.Aeson.Encoding.text"],
         );
-        assert_order("foo bar.h", &["foo/bar.h", "foobar.h"]);
+        assert_order(&matcher, "foo bar.h", &["foo/bar.h", "foobar.h"]);
         // prefix
-        assert_order("is", &["isIEEE", "inSuf"]);
+        assert_order(&matcher, "is", &["isIEEE", "inSuf"]);
         // shorter
-        assert_order("ma", &["map", "many", "maximum"]);
-        assert_order("print", &["printf", "sprintf"]);
+        assert_order(&matcher, "ma", &["map", "many", "maximum"]);
+        assert_order(&matcher, "print", &["printf", "sprintf"]);
         // score(PRINT) = kMinScore
-        assert_order("ast", &["ast", "AST", "INT_FAST16_MAX"]);
+        assert_order(&matcher, "ast", &["ast", "AST", "INT_FAST16_MAX"]);
         // score(PRINT) > kMinScore
-        assert_order("Int", &["int", "INT", "PRINT"]);
+        assert_order(&matcher, "Int", &["int", "INT", "PRINT"]);
     }
 }
 
