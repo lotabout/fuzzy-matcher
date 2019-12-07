@@ -1,5 +1,3 @@
-use crate::skim::fuzzy_indices;
-
 pub mod clangd;
 pub mod fzf;
 pub mod skim;

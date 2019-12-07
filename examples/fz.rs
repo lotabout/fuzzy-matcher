@@ -1,16 +1,12 @@
-use fuzzy_matcher::skim::fuzzy_indices;
+use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcher;
 use std::env;
 use std::io::{self, BufRead};
 use std::process::exit;
 use termion::style::{Invert, Reset};
 
 pub fn main() {
-    let line = "a".repeat(20000);
-    let pattern = "a".repeat(6);
-    if let Some((score, indices)) = fuzzy_indices(&line, &pattern) {
-        println!("{:8}: {}", score, wrap_matches(&line, &indices));
-    }
-
+    let matcher = SkimMatcher::default();
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 2 {
@@ -23,7 +19,7 @@ pub fn main() {
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         if let Ok(line) = line {
-            if let Some((score, indices)) = fuzzy_indices(&line, pattern) {
+            if let Some((score, indices)) = matcher.fuzzy_indices(&line, pattern) {
                 println!("{:8}: {}", score, wrap_matches(&line, &indices));
             }
         }
