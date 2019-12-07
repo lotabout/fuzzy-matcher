@@ -1,3 +1,4 @@
+use crate::util::*;
 ///! The fuzzy matching algorithm used by skim
 ///! It focus more on path matching
 ///
@@ -15,9 +16,7 @@
 ///! ```
 ///!
 ///! It is modeled after <https://github.com/felipesere/icepick.git>
-
 use std::cmp::max;
-use crate::util::*;
 
 const BONUS_MATCHED: i64 = 4;
 const BONUS_CASE_MATCH: i64 = 4;
@@ -217,7 +216,7 @@ fn fuzzy_score(
     }
 
     // apply bonus for matches after a separator
-    if choice_prev_ch_type == CharType::Separ {
+    if choice_prev_ch_type == CharType::NonWord {
         score += BONUS_SEPARATOR;
     }
 

@@ -5,6 +5,12 @@ use std::process::exit;
 use termion::style::{Invert, Reset};
 
 pub fn main() {
+    let line = "a".repeat(20000);
+    let pattern = "a".repeat(6);
+    if let Some((score, indices)) = fuzzy_indices(&line, &pattern) {
+        println!("{:8}: {}", score, wrap_matches(&line, &indices));
+    }
+
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 2 {

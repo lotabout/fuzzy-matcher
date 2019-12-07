@@ -233,7 +233,7 @@ fn skip_penalty(_ch_idx: usize, ch: char, last_action: Action) -> i64 {
         score += 3;
     }
 
-    if char_type_of(ch) == CharType::Separ {
+    if char_type_of(ch) == CharType::NonWord {
         // skip separator
         score += 6;
     }
