@@ -44,7 +44,7 @@ impl FuzzyMatcher for ClangdMatcher {
 
 /// fuzzy match `line` with `pattern`, returning the score and indices of matches
 pub fn fuzzy_indices(line: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
-    if !cheap_matches(line, pattern) {
+    if !cheap_matches(line, pattern, false) {
         return None;
     }
 
@@ -88,7 +88,7 @@ pub fn fuzzy_indices(line: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
 
 /// fuzzy match `line` with `pattern`, returning the score(the larger the better) on match
 pub fn fuzzy_match(line: &str, pattern: &str) -> Option<i64> {
-    if !cheap_matches(line, pattern) {
+    if !cheap_matches(line, pattern, false) {
         return None;
     }
 
@@ -369,7 +369,7 @@ mod tests {
             "Da.Te",
             &["Data.Text", "Data.Text.Lazy", "Data.Aeson.Encoding.text"],
         );
-        assert_order(&matcher, "foo bar.h", &["foo/bar.h", "foobar.h"]);
+        assert_order(&matcher, "foobar.h", &["foobar.h", "foo/bar.h"]);
         // prefix
         assert_order(&matcher, "is", &["isIEEE", "inSuf"]);
         // shorter

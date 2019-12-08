@@ -2,6 +2,7 @@
 ///
 ///! # Example:
 ///! ```edition2018
+///! use fuzzy_matcher::FuzzyMatcher;
 ///! use fuzzy_matcher::fzf::FzfMatcherV1;
 ///!
 ///! let matcher = FzfMatcherV1::default();
@@ -92,6 +93,18 @@ impl Default for FzfMatcherV1 {
     }
 }
 
+/// fuzzy_match_v1 finds the first "fuzzy" occurrence of the pattern within the given
+/// text in O(n) time where n is the length of the text. Once the position of the
+/// last character is located, it traverses backwards to see if there's a shorter
+/// substring that matches the pattern.
+///
+/// ```text
+/// a_____b___abc__  To find "abc"
+/// *-----*-----*>   1. Forward scan
+///          <***    2. Backward scan
+/// ```
+///
+/// It is modeled after fzf's v1 algorithm. Removed some complicated things.
 impl FzfMatcherV1 {
     pub fn new(score_config: Box<dyn FzfScoreConfig>, case_sensitive: bool) -> Self {
         Self {
@@ -99,19 +112,6 @@ impl FzfMatcherV1 {
             case_sensitive,
         }
     }
-
-    /// fuzzy_match_v1 finds the first "fuzzy" occurrence of the pattern within the given
-    /// text in O(n) time where n is the length of the text. Once the position of the
-    /// last character is located, it traverses backwards to see if there's a shorter
-    /// substring that matches the pattern.
-    ///
-    /// ```text
-    /// a_____b___abc__  To find "abc"
-    /// *-----*-----*>   1. Forward scan
-    ///          <***    2. Backward scan
-    /// ```
-    ///
-    /// It is modeled after fzf's v1 algorithm. Removed some complicated things.
     fn fuzzy_match_v1(
         &self,
         choice: &str,
@@ -119,7 +119,7 @@ impl FzfMatcherV1 {
         case_sensitive: bool,
     ) -> Option<(i64, Vec<usize>)> {
         let _ = ascii_fuzzy_first_index(choice, pattern, case_sensitive)?;
-        let choice_iter = choice.char_indices();
+        let choice_iter = choice.chars().enumerate();
         let mut pattern_iter = pattern.chars().peekable();
 
         let mut o_start_idx = None;
@@ -145,14 +145,17 @@ impl FzfMatcherV1 {
 
         // scan backward to find the first match of whole pattern
         if o_start_idx < o_end_idx {
+            let num_of_choice_chars = choice.chars().count();
             let end_idx = o_end_idx.unwrap();
             let choice_iter = choice
-                .char_indices()
+                .chars()
                 .rev()
-                .skip_while(|&(idx, _)| idx > end_idx);
+                .enumerate()
+                .skip(num_of_choice_chars - end_idx - 1);
             let mut pattern_iter = pattern.chars().rev().peekable();
 
-            for (c_idx, c) in choice_iter {
+            for (rev_idx, c) in choice_iter {
+                let c_idx = num_of_choice_chars - rev_idx - 1;
                 match pattern_iter.peek() {
                     Some(&p) => {
                         if char_equal(c, p, case_sensitive) {
@@ -186,14 +189,14 @@ impl FzfMatcherV1 {
         let mut pos = Vec::new();
 
         let n_skip = max(start_idx, 1) - 1;
-        let mut choice_iter = choice.char_indices().skip(n_skip);
-        let mut pattern_iter = pattern.char_indices().peekable();
+        let mut choice_iter = choice.chars().enumerate().skip(n_skip);
+        let mut pattern_iter = pattern.chars().enumerate().peekable();
 
         let mut prev_char_type = if start_idx > 0 {
             let (_, prev_char) = choice_iter.next().unwrap();
             char_type_of(prev_char)
         } else {
-            CharType::Empty
+            CharType::NonWord
         };
 
         let mut score = 0;

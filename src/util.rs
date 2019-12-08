@@ -1,23 +1,35 @@
 use crate::FuzzyMatcher;
 
-pub fn cheap_matches(line: &str, pattern: &str) -> bool {
-    let mut line_iter = line.chars().peekable();
-    let mut pat_iter = pattern.chars().peekable();
-    while line_iter.peek().is_some() && pat_iter.peek().is_some() {
-        let line_lower = line_iter.peek().unwrap().to_ascii_lowercase();
-        let pat_lower = pat_iter.peek().unwrap().to_ascii_lowercase();
-        if line_lower == pat_lower {
-            pat_iter.next();
+pub fn cheap_matches(choice: &str, pattern: &str, case_sensitive: bool) -> bool {
+    let mut pattern_iter = pattern.chars().peekable();
+    for c in choice.chars() {
+        match pattern_iter.peek() {
+            Some(&p) => {
+                if char_equal(c, p, case_sensitive) {
+                    let _ = pattern_iter.next();
+                }
+            }
+            None => break,
         }
-        line_iter.next();
     }
 
-    pat_iter.peek().is_none()
+    pattern_iter.peek().is_none()
+}
+
+/// Given 2 character, check if they are equal (considering ascii case)
+/// e.g. ('a', 'A', true) => false
+/// e.g. ('a', 'A', false) => true
+#[inline]
+pub fn char_equal(a: char, b: char, case_sensitive: bool) -> bool {
+    if case_sensitive {
+        a == b
+    } else {
+        a.eq_ignore_ascii_case(&b)
+    }
 }
 
 #[derive(Debug, PartialEq)]
 pub enum CharType {
-    Empty,
     NonWord,
     Lower,
     Upper,
@@ -26,9 +38,7 @@ pub enum CharType {
 
 #[inline]
 pub fn char_type_of(ch: char) -> CharType {
-    if ch == '\0' {
-        CharType::Empty
-    } else if ch.is_lowercase() {
+    if ch.is_lowercase() {
         CharType::Lower
     } else if ch.is_uppercase() {
         CharType::Upper
@@ -64,9 +74,7 @@ pub fn char_role(prev: char, cur: char) -> CharRole {
     use self::CharRole::*;
     use self::CharType::*;
     match (char_type_of(prev), char_type_of(cur)) {
-        (Empty, Lower) | (Empty, Upper) | (Lower, Upper) | (NonWord, Lower) | (NonWord, Upper) => {
-            Head
-        }
+        (Lower, Upper) | (NonWord, Lower) | (NonWord, Upper) => Head,
         _ => Tail,
     }
 }
@@ -98,7 +106,7 @@ pub fn filter_and_sort(
 ) -> Vec<&'static str> {
     let mut lines_with_score: Vec<(i64, &'static str)> = lines
         .iter()
-        .map(|&s| (matcher.fuzzy_match(s, pattern).unwrap_or(-(1 << 62)), s))
+        .filter_map(|&s| matcher.fuzzy_match(s, pattern).map(|score| (score, s)))
         .collect();
     lines_with_score.sort_by_key(|(score, _)| -score);
     lines_with_score
