@@ -54,6 +54,8 @@ Skim V2:
     and input line.
 - Space complexity is `O(mn)` for `fuzzy_indices` and `O(2n)` for
     `fuzzy_match` which will compress the table for dynamic programming.
+- V2 matcher has an option to set the max element of the score matrix, if
+    `m*n` exceeded the limit, it will fallback to a linear search.
 
 ### Clangd
 

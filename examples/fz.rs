@@ -1,11 +1,11 @@
-use fuzzy_matcher::skim::{SkimMatcherV2, SkimMatcher};
+use fuzzy_matcher::clangd::ClangdMatcher;
+use fuzzy_matcher::fzf::FzfMatcherV1;
+use fuzzy_matcher::skim::{SkimMatcher, SkimMatcherV2};
 use fuzzy_matcher::FuzzyMatcher;
 use std::env;
 use std::io::{self, BufRead};
 use std::process::exit;
 use termion::style::{Invert, Reset};
-use fuzzy_matcher::fzf::FzfMatcherV1;
-use fuzzy_matcher::clangd::ClangdMatcher;
 
 pub fn main() {
     let args: Vec<String> = env::args().collect();
@@ -33,7 +33,7 @@ pub fn main() {
         Some("skim_v1") => Box::new(SkimMatcher::default()),
         Some("fzf_v1") => Box::new(FzfMatcherV1::default()),
         Some("clangd") => Box::new(ClangdMatcher::default()),
-        _ => panic!("Algorithm not support {:?}", algorithm)
+        _ => panic!("Algorithm not support {:?}", algorithm),
     };
 
     let stdin = io::stdin();

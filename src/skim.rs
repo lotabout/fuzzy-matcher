@@ -246,7 +246,7 @@ fn fuzzy_score(
     score
 }
 
-pub trait SkimScoreConfig {
+pub trait SkimScoreConfig: Send + Sync{
     fn score_match(&self) -> i32;
     fn gap_start(&self) -> i32;
     fn gap_extension(&self) -> i32;
@@ -325,12 +325,12 @@ enum Movement {
 
 /// Inner state of the score matrix
 #[derive(Debug, Copy, Clone)]
-struct Cell {
+struct MatrixCell {
     pub movement: Movement,
     pub score: i32, // The max score of align pattern[..i] & choice[..j]
 }
 
-impl Default for Cell {
+impl Default for MatrixCell {
     fn default() -> Self {
         Self {
             movement: Skip,
@@ -338,6 +338,9 @@ impl Default for Cell {
         }
     }
 }
+
+use std::cell::{Ref, RefCell, RefMut};
+use thread_local::CachedThreadLocal;
 
 /// Fuzzy matching is a sub problem is sequence alignment.
 /// Specifically what we'd like to implement is sequence alignment with affine gap penalty.
@@ -387,46 +390,83 @@ impl Default for Cell {
 /// ```
 pub struct SkimMatcherV2 {
     score_config: Box<dyn SkimScoreConfig>,
+    element_limit: usize,
+
+    m_cache: CachedThreadLocal<RefCell<Vec<MatrixCell>>>,
+    p_cache: CachedThreadLocal<RefCell<Vec<MatrixCell>>>,
 }
 
 impl Default for SkimMatcherV2 {
     fn default() -> Self {
         Self {
             score_config: Box::new(DefaultSkimScoreConfig::default()),
+            m_cache: CachedThreadLocal::new(),
+            p_cache: CachedThreadLocal::new(),
+            element_limit: 0,
         }
     }
 }
 
-type ScoreMatrix = Vec<Vec<Cell>>;
+/// Simulate a 1-D vector as 2-D matrix
+struct Matrix<T: Copy> {
+    matrix: RefCell<Vec<T>>,
+    pub rows: usize,
+    pub cols: usize,
+}
+
+impl<T: Copy> Matrix<T> {
+    /// given a matrix, extend it to be (rows x cols) and fill in as init_val
+    pub fn new(matrix: RefCell<Vec<T>>, rows: usize, cols: usize, init_val: T) -> Self {
+        {
+            let mut m = matrix.borrow_mut();
+            m.clear();
+            m.resize(rows * cols, init_val);
+        }
+        Matrix { matrix, rows, cols }
+    }
+
+    fn get(&self, row: usize, col: usize) -> Ref<T> {
+        Ref::map(self.matrix.borrow(), |m| {
+            m.get(row * self.cols + col).unwrap()
+        })
+    }
+
+    fn get_mut(&mut self, row: usize, col: usize) -> RefMut<T> {
+        RefMut::map(self.matrix.borrow_mut(), |m| {
+            m.get_mut(row * self.cols + col).unwrap()
+        })
+    }
+
+    fn get_row(&self, row: usize) -> Ref<[T]> {
+        let start = row * self.cols;
+        Ref::map(self.matrix.borrow(), |m| &m[start..start + self.cols])
+    }
+}
 
 impl SkimMatcherV2 {
-    pub fn new(score_config: Box<dyn SkimScoreConfig>) -> Self {
-        Self { score_config }
+    pub fn score_config(mut self, score_config: Box<dyn SkimScoreConfig>) -> Self {
+        self.score_config = score_config;
+        self
+    }
+
+    pub fn element_limit(mut self, elements: usize) -> Self {
+        self.element_limit = elements;
+        self
     }
 
     /// Build the score matrix using the algorithm described above
     fn build_score_matrix(
         &self,
+        m: &mut Matrix<MatrixCell>,
+        p: &mut Matrix<MatrixCell>,
         choice: &str,
         pattern: &str,
         compressed: bool,
         case_sensitive: bool,
-    ) -> Option<(ScoreMatrix, ScoreMatrix)> {
-        let num_choice_chars = choice.chars().count();
-        let num_pattern_chars = pattern.chars().count();
-        let max_rows = if compressed { 2 } else { num_pattern_chars + 1 };
-
-        // initialize the score matrix
-        let mut m: Vec<Vec<Cell>> = Vec::with_capacity(max_rows);
-        let mut p: Vec<Vec<Cell>> = Vec::with_capacity(max_rows);
-        for _ in 0..max_rows {
-            m.push(vec![Cell::default(); num_choice_chars + 1]);
-            p.push(vec![Cell::default(); num_choice_chars + 1]);
-        }
-
+    ) {
         // p[0][j]: the score of best alignment of p[] and c[..=j] where c[j] is not matched
-        for j in 0..=num_choice_chars {
-            p[0][j].score = self.score_config.gap_extension();
+        for j in 0..p.cols {
+            p.get_mut(0, j).score = self.score_config.gap_extension();
         }
 
         // update the matrix;
@@ -444,12 +484,12 @@ impl SkimMatcherV2 {
                 if let Some(match_score) =
                     self.calculate_match_score(prev_ch, c_ch, p_ch, i, j, case_sensitive)
                 {
-                    let prev_match_score = m[row_prev][col_prev].score;
-                    let prev_skip_score = p[row_prev][col_prev].score;
+                    let prev_match_score = m.get(row_prev, col_prev).score;
+                    let prev_skip_score = p.get(row_prev, col_prev).score;
                     if prev_match_score >= prev_skip_score {
-                        m[row][col].movement = Match;
+                        m.get_mut(row, col).movement = Match;
                     }
-                    m[row][col].score = (match_score as i32)
+                    m.get_mut(row, col).score = (match_score as i32)
                         + max(
                             prev_match_score + self.score_config.bonus_consecutive(),
                             prev_skip_score,
@@ -460,21 +500,20 @@ impl SkimMatcherV2 {
                 // P[i][j] = max(gap_start + gap_extend + M[i][j-1], gap_extend + P[i][j-1])
                 let prev_match_score = self.score_config.gap_start()
                     + self.score_config.gap_extension()
-                    + m[row][col_prev].score;
-                let prev_skip_score = self.score_config.gap_extension() + p[row][col_prev].score;
+                    + m.get(row, col_prev).score;
+                let prev_skip_score =
+                    self.score_config.gap_extension() + p.get(row, col_prev).score;
                 if prev_match_score >= prev_skip_score {
-                    p[row][col].score = prev_match_score;
-                    p[row][col].movement = Match;
+                    p.get_mut(row, col).score = prev_match_score;
+                    p.get_mut(row, col).movement = Match;
                 } else {
-                    p[row][col].score = prev_skip_score;
-                    p[row][col].movement = Skip;
+                    p.get_mut(row, col).score = prev_skip_score;
+                    p.get_mut(row, col).movement = Skip;
                 }
 
                 prev_ch = c_ch;
             }
         }
-
-        Some((m, p))
     }
 
     /// In case we don't need to backtrack the matching indices, we could use only 2 rows for the
@@ -548,6 +587,7 @@ impl SkimMatcherV2 {
         }
 
         let case_sensitive = self.contains_upper(pattern);
+        let compressed = !with_pos;
 
         if !cheap_matches(choice, pattern, case_sensitive) {
             return None;
@@ -557,9 +597,31 @@ impl SkimMatcherV2 {
             return Some((0, Vec::new()));
         }
 
-        let (m, p) = self.build_score_matrix(choice, pattern, false, false)?;
-        let last_row = &m[m.len() - 1];
-        let (pat_idx, &Cell { score, .. }) = last_row
+        let cols = choice.chars().count() + 1;
+        let num_char_pattern = pattern.chars().count();
+        let rows = if compressed { 2 } else { num_char_pattern + 1 };
+
+        if self.element_limit > 0 && self.element_limit < rows * cols {
+            return self.simple_match(choice, pattern, case_sensitive, with_pos);
+        }
+
+        // initialize the score matrix
+        let mut m = Matrix::new(
+            self.m_cache.get_or(|| RefCell::new(Vec::new())).clone(),
+            rows,
+            cols,
+            MatrixCell::default(),
+        );
+        let mut p = Matrix::new(
+            self.p_cache.get_or(|| RefCell::new(Vec::new())).clone(),
+            rows,
+            cols,
+            MatrixCell::default(),
+        );
+
+        self.build_score_matrix(&mut m, &mut p, choice, pattern, compressed, case_sensitive);
+        let last_row = m.get_row(self.adjust_row_idx(num_char_pattern, compressed));
+        let (pat_idx, &MatrixCell { score, .. }) = last_row
             .iter()
             .enumerate()
             .max_by_key(|&(_, x)| x.score)
@@ -567,7 +629,7 @@ impl SkimMatcherV2 {
 
         let mut positions = Vec::new();
         if with_pos {
-            let mut i = m.len() - 1;
+            let mut i = m.rows - 1;
             let mut j = pat_idx;
             let mut matrix = &m;
             let mut current_move = Match;
@@ -576,7 +638,7 @@ impl SkimMatcherV2 {
                     positions.push(j - 1);
                 }
 
-                current_move = matrix[i][j].movement;
+                current_move = matrix.get(i, j).movement;
                 if ptr::eq(matrix, &m) {
                     i -= 1;
                 }
@@ -592,6 +654,132 @@ impl SkimMatcherV2 {
         }
 
         Some((score as i64, positions))
+    }
+
+    /// Borrowed from fzf v1, if the memory limit exceeded, fallback to simple linear search
+    pub fn simple_match(
+        &self,
+        choice: &str,
+        pattern: &str,
+        case_sensitive: bool,
+        with_pos: bool,
+    ) -> Option<(i64, Vec<usize>)> {
+        let mut choice_iter = choice.char_indices().peekable();
+        let mut pattern_iter = pattern.chars().peekable();
+        let mut o_start_byte = None;
+
+        // scan forward to find the first match of whole pattern
+        let mut start_chars = 0;
+        while choice_iter.peek().is_some() && pattern_iter.peek().is_some() {
+            let (byte_idx, c) = choice_iter.next().unwrap();
+            match pattern_iter.peek() {
+                Some(&p) => {
+                    if char_equal(c, p, case_sensitive) {
+                        let _ = pattern_iter.next();
+                        o_start_byte = o_start_byte.or(Some(byte_idx));
+                    }
+                }
+                None => break,
+            }
+
+            if o_start_byte.is_none() {
+                start_chars += 1;
+            }
+        }
+
+        if pattern_iter.peek().is_some() {
+            return None;
+        }
+
+        let start_byte = o_start_byte.unwrap_or(0);
+        let end_byte = choice_iter
+            .next()
+            .map(|(idx, _)| idx)
+            .unwrap_or(choice.len());
+
+        // scan backward to find the first match of whole pattern
+        let mut o_nearest_start_byte = None;
+        let mut pattern_iter = pattern.chars().rev().peekable();
+        for (idx, c) in choice[start_byte..end_byte].char_indices().rev() {
+            match pattern_iter.peek() {
+                Some(&p) => {
+                    if char_equal(c, p, case_sensitive) {
+                        let _ = pattern_iter.next();
+                        o_nearest_start_byte = Some(idx);
+                    }
+                }
+                None => break,
+            }
+        }
+
+        let start_byte = start_byte + o_nearest_start_byte.unwrap_or(0);
+        Some(self.calculate_score_with_pos(
+            choice,
+            pattern,
+            start_byte,
+            end_byte,
+            start_chars,
+            case_sensitive,
+            with_pos,
+        ))
+    }
+
+    fn calculate_score_with_pos(
+        &self,
+        choice: &str,
+        pattern: &str,
+        start_bytes: usize,
+        end_bytes: usize,
+        start_chars: usize,
+        case_sensitive: bool,
+        with_pos: bool,
+    ) -> (i64, Vec<usize>) {
+        let mut pos = Vec::new();
+
+        let choice_iter = choice[start_bytes..end_bytes].chars().enumerate();
+        let mut pattern_iter = pattern.chars().enumerate().peekable();
+
+        // unfortunately we could not get the the character before the first character's(for performance)
+        // so we tread them as NonWord
+        let mut prev_ch = '\0';
+
+        let mut score: i32 = 0;
+        let mut in_gap = false;
+        for (c_idx, c) in choice_iter {
+            let op = pattern_iter.peek();
+            if op.is_none() {
+                break;
+            }
+
+            let (p_idx, p) = *op.unwrap();
+
+            if let Some(match_score) = self.calculate_match_score(
+                prev_ch,
+                c,
+                p,
+                c_idx + start_chars,
+                p_idx,
+                case_sensitive,
+            ) {
+                if with_pos {
+                    pos.push(c_idx + start_chars);
+                }
+                score += match_score as i32;
+                in_gap = false;
+                let _ = pattern_iter.next();
+            } else {
+                if !in_gap {
+                    score += self.score_config.gap_start();
+                }
+
+                score += self.score_config.gap_extension();
+                in_gap = true;
+            }
+
+            prev_ch = c;
+        }
+
+        (score as i64, pos)
     }
 }
 
@@ -673,6 +861,54 @@ mod tests {
         assert_order(&matcher, "ast", &["ast", "AST", "INT_FAST16_MAX"]);
         // score(PRINT) > kMinScore
         assert_order(&matcher, "Int", &["int", "INT", "PRINT"]);
+    }
+
+    #[test]
+    fn test_match_or_not_simple() {
+        let matcher = SkimMatcherV2::default();
+        assert_eq!(
+            matcher
+                .simple_match("axbycz", "xyz", false, true)
+                .unwrap()
+                .1,
+            vec![1, 3, 5]
+        );
+
+        assert_eq!(
+            matcher.simple_match("", "", false, false),
+            Some((0, vec![]))
+        );
+        assert_eq!(
+            matcher.simple_match("abcdefaghi", "", false, false),
+            Some((0, vec![]))
+        );
+        assert_eq!(matcher.simple_match("", "a", false, false), None);
+        assert_eq!(
+            matcher.simple_match("abcdefaghi", "中", false, false,),
+            None
+        );
+        assert_eq!(matcher.simple_match("abc", "abx", false, false,), None);
+        assert_eq!(
+            matcher
+                .simple_match("axbycz", "abc", false, true)
+                .unwrap()
+                .1,
+            vec![0, 2, 4]
+        );
+        assert_eq!(
+            matcher
+                .simple_match("axbycz", "xyz", false, true)
+                .unwrap()
+                .1,
+            vec![1, 3, 5]
+        );
+        assert_eq!(
+            matcher
+                .simple_match("Hello, 世界", "H世", false, true)
+                .unwrap()
+                .1,
+            vec![0, 7]
+        );
     }
 
     #[test]
