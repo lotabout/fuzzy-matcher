@@ -246,7 +246,7 @@ fn fuzzy_score(
     score
 }
 
-pub trait SkimScoreConfig: Send + Sync{
+pub trait SkimScoreConfig: Send + Sync {
     fn score_match(&self) -> i32;
     fn gap_start(&self) -> i32;
     fn gap_extension(&self) -> i32;
@@ -330,16 +330,18 @@ struct MatrixCell {
     pub score: i32, // The max score of align pattern[..i] & choice[..j]
 }
 
+const MATRIX_CELL_NEG_INFINITY: i32 = std::i16::MIN as i32;
+
 impl Default for MatrixCell {
     fn default() -> Self {
         Self {
             movement: Skip,
-            score: std::i16::MIN as i32,
+            score: MATRIX_CELL_NEG_INFINITY,
         }
     }
 }
 
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::RefCell;
 use thread_local::CachedThreadLocal;
 
 /// Fuzzy matching is a sub problem is sequence alignment.
@@ -408,38 +410,42 @@ impl Default for SkimMatcherV2 {
 }
 
 /// Simulate a 1-D vector as 2-D matrix
-struct Matrix<T: Copy> {
-    matrix: RefCell<Vec<T>>,
+struct ScoreMatrix<'a> {
+    matrix: &'a mut Vec<MatrixCell>,
     pub rows: usize,
     pub cols: usize,
 }
 
-impl<T: Copy> Matrix<T> {
+impl<'a> ScoreMatrix<'a> {
     /// given a matrix, extend it to be (rows x cols) and fill in as init_val
-    pub fn new(matrix: RefCell<Vec<T>>, rows: usize, cols: usize, init_val: T) -> Self {
-        {
-            let mut m = matrix.borrow_mut();
-            m.clear();
-            m.resize(rows * cols, init_val);
-        }
-        Matrix { matrix, rows, cols }
+    pub fn new(matrix: &'a mut Vec<MatrixCell>, rows: usize, cols: usize) -> Self {
+        matrix.resize(rows * cols, MatrixCell::default());
+        ScoreMatrix { matrix, rows, cols }
     }
 
-    fn get(&self, row: usize, col: usize) -> Ref<T> {
-        Ref::map(self.matrix.borrow(), |m| {
-            m.get(row * self.cols + col).unwrap()
-        })
+    #[inline]
+    fn get_score(&self, row: usize, col: usize) -> i32 {
+        self.matrix[row * self.cols + col].score
     }
 
-    fn get_mut(&mut self, row: usize, col: usize) -> RefMut<T> {
-        RefMut::map(self.matrix.borrow_mut(), |m| {
-            m.get_mut(row * self.cols + col).unwrap()
-        })
+    #[inline]
+    fn get_movement(&self, row: usize, col: usize) -> Movement {
+        self.matrix[row * self.cols + col].movement
     }
 
-    fn get_row(&self, row: usize) -> Ref<[T]> {
+    #[inline]
+    fn set_score(&mut self, row: usize, col: usize, score: i32) {
+        self.matrix[row * self.cols + col].score = score;
+    }
+
+    #[inline]
+    fn set_movement(&mut self, row: usize, col: usize, movement: Movement) {
+        self.matrix[row * self.cols + col].movement = movement;
+    }
+
+    fn get_row(&self, row: usize) -> &[MatrixCell] {
         let start = row * self.cols;
-        Ref::map(self.matrix.borrow(), |m| &m[start..start + self.cols])
+        &self.matrix[start..start + self.cols]
     }
 }
 
@@ -457,16 +463,32 @@ impl SkimMatcherV2 {
     /// Build the score matrix using the algorithm described above
     fn build_score_matrix(
         &self,
-        m: &mut Matrix<MatrixCell>,
-        p: &mut Matrix<MatrixCell>,
+        m: &mut ScoreMatrix,
+        p: &mut ScoreMatrix,
         choice: &str,
         pattern: &str,
         compressed: bool,
         case_sensitive: bool,
     ) {
+        for i in 0..m.rows {
+            m.set_score(i, 0, MATRIX_CELL_NEG_INFINITY);
+            m.set_movement(i, 0, Movement::Skip);
+        }
+
+        for j in 0..m.cols {
+            m.set_score(0, j, MATRIX_CELL_NEG_INFINITY);
+            m.set_movement(0, j, Movement::Skip);
+        }
+
+        for i in 0..p.rows {
+            p.set_score(i, 0, MATRIX_CELL_NEG_INFINITY);
+            p.set_movement(i, 0, Movement::Skip);
+        }
+
         // p[0][j]: the score of best alignment of p[] and c[..=j] where c[j] is not matched
         for j in 0..p.cols {
-            p.get_mut(0, j).score = self.score_config.gap_extension();
+            p.set_score(0, j, self.score_config.gap_extension());
+            p.set_movement(0, j, Movement::Skip);
         }
 
         // update the matrix;
@@ -484,31 +506,38 @@ impl SkimMatcherV2 {
                 if let Some(match_score) =
                     self.calculate_match_score(prev_ch, c_ch, p_ch, i, j, case_sensitive)
                 {
-                    let prev_match_score = m.get(row_prev, col_prev).score;
-                    let prev_skip_score = p.get(row_prev, col_prev).score;
+                    let prev_match_score = m.get_score(row_prev, col_prev);
+                    let prev_skip_score = p.get_score(row_prev, col_prev);
                     if prev_match_score >= prev_skip_score {
-                        m.get_mut(row, col).movement = Match;
+                        m.set_movement(row, col, Movement::Match);
                     }
-                    m.get_mut(row, col).score = (match_score as i32)
-                        + max(
-                            prev_match_score + self.score_config.bonus_consecutive(),
-                            prev_skip_score,
-                        );
+                    m.set_score(
+                        row,
+                        col,
+                        (match_score as i32)
+                            + max(
+                                prev_match_score + self.score_config.bonus_consecutive(),
+                                prev_skip_score,
+                            ),
+                    );
+                } else {
+                    m.set_score(row, col, MATRIX_CELL_NEG_INFINITY);
+                    m.set_movement(row, col, Movement::Skip);
                 }
 
                 // update P matrix
                 // P[i][j] = max(gap_start + gap_extend + M[i][j-1], gap_extend + P[i][j-1])
                 let prev_match_score = self.score_config.gap_start()
                     + self.score_config.gap_extension()
-                    + m.get(row, col_prev).score;
+                    + m.get_score(row, col_prev);
                 let prev_skip_score =
-                    self.score_config.gap_extension() + p.get(row, col_prev).score;
+                    self.score_config.gap_extension() + p.get_score(row, col_prev);
                 if prev_match_score >= prev_skip_score {
-                    p.get_mut(row, col).score = prev_match_score;
-                    p.get_mut(row, col).movement = Match;
+                    p.set_score(row, col, prev_match_score);
+                    p.set_movement(row, col, Movement::Match);
                 } else {
-                    p.get_mut(row, col).score = prev_skip_score;
-                    p.get_mut(row, col).movement = Skip;
+                    p.set_score(row, col, prev_skip_score);
+                    p.set_movement(row, col, Movement::Skip);
                 }
 
                 prev_ch = c_ch;
@@ -606,18 +635,16 @@ impl SkimMatcherV2 {
         }
 
         // initialize the score matrix
-        let mut m = Matrix::new(
-            self.m_cache.get_or(|| RefCell::new(Vec::new())).clone(),
-            rows,
-            cols,
-            MatrixCell::default(),
-        );
-        let mut p = Matrix::new(
-            self.p_cache.get_or(|| RefCell::new(Vec::new())).clone(),
-            rows,
-            cols,
-            MatrixCell::default(),
-        );
+        let mut m = self
+            .m_cache
+            .get_or(|| RefCell::new(Vec::new()))
+            .borrow_mut();
+        let mut m = ScoreMatrix::new(&mut m, rows, cols);
+        let mut p = self
+            .p_cache
+            .get_or(|| RefCell::new(Vec::new()))
+            .borrow_mut();
+        let mut p = ScoreMatrix::new(&mut p, rows, cols);
 
         self.build_score_matrix(&mut m, &mut p, choice, pattern, compressed, case_sensitive);
         let last_row = m.get_row(self.adjust_row_idx(num_char_pattern, compressed));
@@ -638,7 +665,7 @@ impl SkimMatcherV2 {
                     positions.push(j - 1);
                 }
 
-                current_move = matrix.get(i, j).movement;
+                current_move = matrix.get_movement(i, j);
                 if ptr::eq(matrix, &m) {
                     i -= 1;
                 }

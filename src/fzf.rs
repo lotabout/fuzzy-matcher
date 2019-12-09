@@ -17,7 +17,7 @@ use crate::util::{char_type_of, CharType};
 use crate::FuzzyMatcher;
 use std::cmp::max;
 
-pub trait FzfScoreConfig : Send + Sync {
+pub trait FzfScoreConfig: Send + Sync {
     fn score_match(&self) -> i64;
     fn score_gap_start(&self) -> i64;
     fn score_gap_extension(&self) -> i64;
