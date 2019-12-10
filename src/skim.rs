@@ -246,17 +246,18 @@ fn fuzzy_score(
     score
 }
 
-pub trait SkimScoreConfig: Send + Sync {
-    fn score_match(&self) -> i32;
-    fn gap_start(&self) -> i32;
-    fn gap_extension(&self) -> i32;
+#[derive(Copy, Clone)]
+pub struct SkimScoreConfig {
+    pub score_match: i32,
+    pub gap_start: i32,
+    pub gap_extension: i32,
 
     /// The first character in the typed pattern usually has more significance
     /// than the rest so it's important that it appears at special positions where
     /// bonus points are given. e.g. "to-go" vs. "ongoing" on "og" or on "ogo".
     /// The amount of the extra bonus should be limited so that the gap penalty is
     /// still respected.
-    fn bonus_first_char_multiplier(&self) -> i32;
+    pub bonus_first_char_multiplier: i32,
 
     /// We prefer matches at the beginning of a word, but the bonus should not be
     /// too great to prevent the longer acronym matches from always winning over
@@ -264,56 +265,46 @@ pub trait SkimScoreConfig: Send + Sync {
     /// the bonus is cancelled when the gap between the acronyms grows over
     /// 8 characters, which is approximately the average length of the words found
     /// in web2 dictionary and my file system.
-    fn bonus_boundary(&self) -> i32 {
-        self.score_match() / 2
-    }
+    pub bonus_boundary: i32,
 
     /// Although bonus point for non-word characters is non-contextual, we need it
     /// for computing bonus points for consecutive chunks starting with a non-word
     /// character.
-    fn bonus_non_word(&self) -> i32 {
-        self.score_match() / 2
-    }
+    pub bonus_non_word: i32,
 
     /// Edge-triggered bonus for matches in camelCase words.
     /// Compared to word-boundary case, they don't accompany single-character gaps
     /// (e.g. FooBar vs. foo-bar), so we deduct bonus point accordingly.
-    fn bonus_camel123(&self) -> i32 {
-        self.bonus_boundary() + self.gap_extension()
-    }
+    pub bonus_camel123: i32,
 
     /// Minimum bonus point given to characters in consecutive chunks.
     /// Note that bonus points for consecutive matches shouldn't have needed if we
     /// used fixed match score as in the original algorithm.
-    fn bonus_consecutive(&self) -> i32 {
-        -(self.gap_start() + self.gap_extension())
-    }
+    pub bonus_consecutive: i32,
 
     /// Skim will match case-sensitively if the pattern contains ASCII upper case,
     /// If case of case insensitive match, the penalty will be given to case mismatch
-    fn penalty_case_mismatch(&self) -> i32 {
-        self.gap_extension() * 2
-    }
+    pub penalty_case_mismatch: i32,
 }
 
-#[derive(Default, Copy, Clone)]
-pub struct DefaultSkimScoreConfig {}
+impl Default for SkimScoreConfig {
+    fn default() -> Self {
+        let score_match = 16;
+        let gap_start = -3;
+        let gap_extension = -1;
+        let bonus_first_char_multiplier = 2;
 
-impl SkimScoreConfig for DefaultSkimScoreConfig {
-    fn score_match(&self) -> i32 {
-        16
-    }
-
-    fn gap_start(&self) -> i32 {
-        -3
-    }
-
-    fn gap_extension(&self) -> i32 {
-        -1
-    }
-
-    fn bonus_first_char_multiplier(&self) -> i32 {
-        2
+        Self {
+            score_match,
+            gap_start,
+            gap_extension,
+            bonus_first_char_multiplier,
+            bonus_boundary: score_match / 2,
+            bonus_non_word: score_match / 2,
+            bonus_camel123: score_match / 2 + gap_extension,
+            bonus_consecutive: -(gap_start + gap_extension),
+            penalty_case_mismatch: gap_extension * 2,
+        }
     }
 }
 
@@ -391,7 +382,7 @@ use thread_local::CachedThreadLocal;
 /// P[i][j] = max(gap_start + gap_extend + M[i][j-1], gap_extend + P[i][j-1])
 /// ```
 pub struct SkimMatcherV2 {
-    score_config: Box<dyn SkimScoreConfig>,
+    score_config: SkimScoreConfig,
     element_limit: usize,
 
     m_cache: CachedThreadLocal<RefCell<Vec<MatrixCell>>>,
@@ -401,7 +392,7 @@ pub struct SkimMatcherV2 {
 impl Default for SkimMatcherV2 {
     fn default() -> Self {
         Self {
-            score_config: Box::new(DefaultSkimScoreConfig::default()),
+            score_config: SkimScoreConfig::default(),
             m_cache: CachedThreadLocal::new(),
             p_cache: CachedThreadLocal::new(),
             element_limit: 0,
@@ -411,7 +402,7 @@ impl Default for SkimMatcherV2 {
 
 /// Simulate a 1-D vector as 2-D matrix
 struct ScoreMatrix<'a> {
-    matrix: &'a mut Vec<MatrixCell>,
+    matrix: &'a mut [MatrixCell],
     pub rows: usize,
     pub cols: usize,
 }
@@ -450,7 +441,7 @@ impl<'a> ScoreMatrix<'a> {
 }
 
 impl SkimMatcherV2 {
-    pub fn score_config(mut self, score_config: Box<dyn SkimScoreConfig>) -> Self {
+    pub fn score_config(mut self, score_config: SkimScoreConfig) -> Self {
         self.score_config = score_config;
         self
     }
@@ -487,7 +478,7 @@ impl SkimMatcherV2 {
 
         // p[0][j]: the score of best alignment of p[] and c[..=j] where c[j] is not matched
         for j in 0..p.cols {
-            p.set_score(0, j, self.score_config.gap_extension());
+            p.set_score(0, j, self.score_config.gap_extension);
             p.set_movement(0, j, Movement::Skip);
         }
 
@@ -516,7 +507,7 @@ impl SkimMatcherV2 {
                         col,
                         (match_score as i32)
                             + max(
-                                prev_match_score + self.score_config.bonus_consecutive(),
+                                prev_match_score + self.score_config.bonus_consecutive,
                                 prev_skip_score,
                             ),
                     );
@@ -527,11 +518,10 @@ impl SkimMatcherV2 {
 
                 // update P matrix
                 // P[i][j] = max(gap_start + gap_extend + M[i][j-1], gap_extend + P[i][j-1])
-                let prev_match_score = self.score_config.gap_start()
-                    + self.score_config.gap_extension()
+                let prev_match_score = self.score_config.gap_start
+                    + self.score_config.gap_extension
                     + m.get_score(row, col_prev);
-                let prev_skip_score =
-                    self.score_config.gap_extension() + p.get_score(row, col_prev);
+                let prev_skip_score = self.score_config.gap_extension + p.get_score(row, col_prev);
                 if prev_match_score >= prev_skip_score {
                     p.set_score(row, col, prev_match_score);
                     p.set_movement(row, col, Movement::Match);
@@ -570,7 +560,7 @@ impl SkimMatcherV2 {
             return None;
         }
 
-        let score = self.score_config.score_match();
+        let score = self.score_config.score_match;
 
         // check bonus for start of camel case, etc.
         let prev_ch_type = char_type_of(prev_ch);
@@ -579,12 +569,12 @@ impl SkimMatcherV2 {
 
         // bonus for matching the start of the whole choice string
         if c_idx == 0 {
-            bonus *= self.score_config.bonus_first_char_multiplier();
+            bonus *= self.score_config.bonus_first_char_multiplier;
         }
 
         // penalty on case mismatch
         if !case_sensitive && p != c {
-            bonus += self.score_config.penalty_case_mismatch();
+            bonus += self.score_config.penalty_case_mismatch;
         }
 
         Some(max(0, score + bonus) as u16)
@@ -592,10 +582,10 @@ impl SkimMatcherV2 {
 
     fn in_place_bonus(&self, prev_char_type: &CharType, char_type: &CharType) -> i32 {
         match (prev_char_type, char_type) {
-            (CharType::NonWord, t) if *t != CharType::NonWord => self.score_config.bonus_boundary(),
-            (CharType::Lower, CharType::Upper) => self.score_config.bonus_camel123(),
-            (t, CharType::Number) if *t != CharType::Number => self.score_config.bonus_camel123(),
-            (_, CharType::NonWord) => self.score_config.bonus_non_word(),
+            (CharType::NonWord, t) if *t != CharType::NonWord => self.score_config.bonus_boundary,
+            (CharType::Lower, CharType::Upper) => self.score_config.bonus_camel123,
+            (t, CharType::Number) if *t != CharType::Number => self.score_config.bonus_camel123,
+            (_, CharType::NonWord) => self.score_config.bonus_non_word,
             _ => 0,
         }
     }
@@ -796,10 +786,10 @@ impl SkimMatcherV2 {
                 let _ = pattern_iter.next();
             } else {
                 if !in_gap {
-                    score += self.score_config.gap_start();
+                    score += self.score_config.gap_start;
                 }
 
-                score += self.score_config.gap_extension();
+                score += self.score_config.gap_extension;
                 in_gap = true;
             }
 
