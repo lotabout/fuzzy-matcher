@@ -762,6 +762,8 @@ impl SkimMatcherV2 {
 
         let mut score: i32 = 0;
         let mut in_gap = false;
+        let mut consecutive = 0;
+
         for (c_idx, c) in choice_iter {
             let op = pattern_iter.peek();
             if op.is_none() {
@@ -782,7 +784,10 @@ impl SkimMatcherV2 {
                     pos.push(c_idx + start_chars);
                 }
                 score += match_score as i32;
+                score += consecutive * self.score_config.bonus_consecutive;
+
                 in_gap = false;
+                consecutive += 1;
                 let _ = pattern_iter.next();
             } else {
                 if !in_gap {
@@ -791,6 +796,7 @@ impl SkimMatcherV2 {
 
                 score += self.score_config.gap_extension;
                 in_gap = true;
+                consecutive = 0;
             }
 
             prev_ch = c;
