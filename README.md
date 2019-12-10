@@ -65,12 +65,3 @@ Skim V2:
     input line.
 - Space complexity is `O(mn)` for `fuzzy_indices` and `O(2n)` for
     `fuzzy_match` which will compress the table for dynamic programming.
-
-### Fzf
-
-Fzf v1: Described in https://github.com/junegunn/fzf/blob/master/src/algo/algo.go
-
-- Time: `O(n)`
-- Space: `O(n)` for `fuzzy_indices` and `O(1)` for `fuzzy_match`
-
-Fzf v2 is not implemented yet.
