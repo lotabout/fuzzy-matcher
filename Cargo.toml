@@ -12,6 +12,7 @@ license = "MIT"
 edition = "2018"
 
 [dependencies]
+thread_local = "1.0.0"
 
 [dev-dependencies]
 termion = "1.5.1"
