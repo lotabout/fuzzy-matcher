@@ -1,5 +1,4 @@
 use crate::skim::Movement::{Match, Skip};
-use crate::util::*;
 ///! The fuzzy matching algorithm used by skim
 ///!
 ///! # Example:
@@ -216,8 +215,8 @@ fn fuzzy_score(
 ) -> i64 {
     let mut score = BONUS_MATCHED;
 
-    let choice_prev_ch_type = char_type_of(choice_prev_ch);
-    let choice_role = char_role(choice_prev_ch, choice_ch);
+    let choice_prev_ch_type = CharType::of(choice_prev_ch);
+    let choice_role = CharRole::of(choice_prev_ch, choice_ch);
 
     if pat_ch == choice_ch {
         if pat_ch.is_uppercase() {
@@ -230,12 +229,12 @@ fn fuzzy_score(
     }
 
     // apply bonus for camelCases
-    if choice_role == CharRole::Head {
+    if choice_role == CharRole::Head || choice_role == CharRole::Break || choice_role == CharRole::Camel {
         score += BONUS_CAMEL;
     }
 
     // apply bonus for matches after a separator
-    if choice_prev_ch_type == CharType::NonWord {
+    if choice_prev_ch_type == CharType::HardSep || choice_prev_ch_type == CharType::SoftSep {
         score += BONUS_SEPARATOR;
     }
 
@@ -265,17 +264,16 @@ pub struct SkimScoreConfig {
     /// the bonus is cancelled when the gap between the acronyms grows over
     /// 8 characters, which is approximately the average length of the words found
     /// in web2 dictionary and my file system.
-    pub bonus_boundary: i32,
+    pub bonus_head: i32,
 
-    /// Although bonus point for non-word characters is non-contextual, we need it
-    /// for computing bonus points for consecutive chunks starting with a non-word
-    /// character.
-    pub bonus_non_word: i32,
+    /// Just like bonus_head, but its breakage of word is not that strong, so it should
+    /// be slighter less then bonus_head
+    pub bonus_break: i32,
 
     /// Edge-triggered bonus for matches in camelCase words.
     /// Compared to word-boundary case, they don't accompany single-character gaps
     /// (e.g. FooBar vs. foo-bar), so we deduct bonus point accordingly.
-    pub bonus_camel123: i32,
+    pub bonus_camel: i32,
 
     /// Minimum bonus point given to characters in consecutive chunks.
     /// Note that bonus points for consecutive matches shouldn't have needed if we
@@ -299,9 +297,9 @@ impl Default for SkimScoreConfig {
             gap_start,
             gap_extension,
             bonus_first_char_multiplier,
-            bonus_boundary: score_match / 2,
-            bonus_non_word: score_match / 2,
-            bonus_camel123: score_match / 2 + gap_extension,
+            bonus_head: score_match / 2,
+            bonus_break: score_match / 2 + gap_extension,
+            bonus_camel: score_match / 2 + 2 * gap_extension,
             bonus_consecutive: -(gap_start + gap_extension),
             penalty_case_mismatch: gap_extension * 2,
         }
@@ -322,7 +320,6 @@ struct MatrixCell {
 }
 
 const MATRIX_CELL_NEG_INFINITY: i32 = std::i16::MIN as i32;
-
 impl Default for MatrixCell {
     fn default() -> Self {
         Self {
@@ -332,8 +329,128 @@ impl Default for MatrixCell {
     }
 }
 
+/// Simulate a 1-D vector as 2-D matrix
+struct ScoreMatrix<'a> {
+    matrix: &'a mut [MatrixCell],
+    pub rows: usize,
+    pub cols: usize,
+}
+
+impl<'a> ScoreMatrix<'a> {
+    /// given a matrix, extend it to be (rows x cols) and fill in as init_val
+    pub fn new(matrix: &'a mut Vec<MatrixCell>, rows: usize, cols: usize) -> Self {
+        matrix.resize(rows * cols, MatrixCell::default());
+        ScoreMatrix { matrix, rows, cols }
+    }
+
+    #[inline]
+    fn get_score(&self, row: usize, col: usize) -> i32 {
+        self.matrix[row * self.cols + col].score
+    }
+
+    #[inline]
+    fn get_movement(&self, row: usize, col: usize) -> Movement {
+        self.matrix[row * self.cols + col].movement
+    }
+
+    #[inline]
+    fn set_score(&mut self, row: usize, col: usize, score: i32) {
+        self.matrix[row * self.cols + col].score = score;
+    }
+
+    #[inline]
+    fn set_movement(&mut self, row: usize, col: usize, movement: Movement) {
+        self.matrix[row * self.cols + col].movement = movement;
+    }
+
+    fn get_row(&self, row: usize) -> &[MatrixCell] {
+        let start = row * self.cols;
+        &self.matrix[start..start + self.cols]
+    }
+}
+
+/// We categorize characters into types:
+///
+/// - Empty(E): the start of string
+/// - Upper(U): the ascii upper case
+/// - lower(L): the ascii lower case & other unicode characters
+/// - number(N): ascii number
+/// - hard separator(S): clearly separate the content: ` ` `/` `\` `|` `(` `) `[` `]` `{` `}`
+/// - soft separator(s): other ascii punctuation, e.g. `!` `"` `#` `$`, ...
+#[derive(Debug, PartialEq, Copy, Clone)]
+enum CharType {
+    Empty,
+    Upper,
+    Lower,
+    Number,
+    HardSep,
+    SoftSep,
+}
+
+impl CharType {
+    pub fn of(ch: char) -> Self {
+        if ch == '\0' {
+            CharType::Empty
+        } else if ch == ' ' || ch == '/' || ch == '\\' || ch == '|' || ch == '(' || ch == ')' || ch == '[' || ch == ']' || ch == '{' || ch == '}' {
+            CharType::HardSep
+        } else if ch.is_ascii_punctuation() {
+            CharType::SoftSep
+        } else if ch.is_ascii_digit() {
+            CharType::Number
+        } else if ch.is_ascii_uppercase() {
+            CharType::Upper
+        } else {
+            CharType::Lower
+        }
+    }
+}
+
+
+/// Ref: https://github.com/llvm-mirror/clang-tools-extra/blob/master/clangd/FuzzyMatch.cpp
+///
+///
+/// ```text
+/// +-----------+--------------+-------+
+/// | Example   | Chars | Type | Role  |
+/// +-----------+--------------+-------+
+/// | (f)oo     | ^fo   | Ell  | Head  |
+/// | (F)oo     | ^Fo   | EUl  | Head  |
+/// | Foo/(B)ar | /Ba   | SUl  | Head  |
+/// | Foo/(b)ar | /ba   | Sll  | Head  |
+/// | Foo.(B)ar | .Ba   | SUl  | Break |
+/// | Foo(B)ar  | oBa   | lUl  | Camel |
+/// | 123(B)ar  | 3Ba   | nUl  | Camel |
+/// | F(o)oBar  | Foo   | Ull  | Tail  |
+/// | H(T)TP    | HTT   | UUU  | Tail  |
+/// | others    |       |      | Tail  |
+/// +-----------+--------------+-------+
+#[derive(Debug, PartialEq, Copy, Clone)]
+enum CharRole {
+    Head,
+    Tail,
+    Camel,
+    Break,
+}
+
+impl CharRole {
+    pub fn of(prev: char, cur: char) -> Self {
+        Self::of_type(CharType::of(prev), CharType::of(cur))
+    }
+    pub fn of_type(prev: CharType, cur: CharType) -> Self {
+        use CharType::*;
+        use CharRole::*;
+        match (prev, cur) {
+            (Empty, _) | (HardSep, _) => Head,
+            (SoftSep, _) => Break,
+            (Lower, Upper) | (Number, Upper) => Camel,
+            _ => Tail
+        }
+    }
+}
+
 use std::cell::RefCell;
 use thread_local::CachedThreadLocal;
+use crate::util::{char_equal, cheap_matches};
 
 /// Fuzzy matching is a sub problem is sequence alignment.
 /// Specifically what we'd like to implement is sequence alignment with affine gap penalty.
@@ -397,46 +514,6 @@ impl Default for SkimMatcherV2 {
             p_cache: CachedThreadLocal::new(),
             element_limit: 0,
         }
-    }
-}
-
-/// Simulate a 1-D vector as 2-D matrix
-struct ScoreMatrix<'a> {
-    matrix: &'a mut [MatrixCell],
-    pub rows: usize,
-    pub cols: usize,
-}
-
-impl<'a> ScoreMatrix<'a> {
-    /// given a matrix, extend it to be (rows x cols) and fill in as init_val
-    pub fn new(matrix: &'a mut Vec<MatrixCell>, rows: usize, cols: usize) -> Self {
-        matrix.resize(rows * cols, MatrixCell::default());
-        ScoreMatrix { matrix, rows, cols }
-    }
-
-    #[inline]
-    fn get_score(&self, row: usize, col: usize) -> i32 {
-        self.matrix[row * self.cols + col].score
-    }
-
-    #[inline]
-    fn get_movement(&self, row: usize, col: usize) -> Movement {
-        self.matrix[row * self.cols + col].movement
-    }
-
-    #[inline]
-    fn set_score(&mut self, row: usize, col: usize, score: i32) {
-        self.matrix[row * self.cols + col].score = score;
-    }
-
-    #[inline]
-    fn set_movement(&mut self, row: usize, col: usize, movement: Movement) {
-        self.matrix[row * self.cols + col].movement = movement;
-    }
-
-    fn get_row(&self, row: usize) -> &[MatrixCell] {
-        let start = row * self.cols;
-        &self.matrix[start..start + self.cols]
     }
 }
 
@@ -563,9 +640,9 @@ impl SkimMatcherV2 {
         let score = self.score_config.score_match;
 
         // check bonus for start of camel case, etc.
-        let prev_ch_type = char_type_of(prev_ch);
-        let ch_type = char_type_of(c);
-        let mut bonus = self.in_place_bonus(&prev_ch_type, &ch_type);
+        let prev_ch_type = CharType::of(prev_ch);
+        let ch_type = CharType::of(c);
+        let mut bonus = self.in_place_bonus(prev_ch_type, ch_type);
 
         // bonus for matching the start of the whole choice string
         if c_idx == 0 {
@@ -580,13 +657,12 @@ impl SkimMatcherV2 {
         Some(max(0, score + bonus) as u16)
     }
 
-    fn in_place_bonus(&self, prev_char_type: &CharType, char_type: &CharType) -> i32 {
-        match (prev_char_type, char_type) {
-            (CharType::NonWord, t) if *t != CharType::NonWord => self.score_config.bonus_boundary,
-            (CharType::Lower, CharType::Upper) => self.score_config.bonus_camel123,
-            (t, CharType::Number) if *t != CharType::Number => self.score_config.bonus_camel123,
-            (_, CharType::NonWord) => self.score_config.bonus_non_word,
-            _ => 0,
+    fn in_place_bonus(&self, prev_char_type: CharType, char_type: CharType) -> i32 {
+        match CharRole::of_type(prev_char_type, char_type) {
+            CharRole::Head => self.score_config.bonus_head,
+            CharRole::Camel => self.score_config.bonus_camel,
+            CharRole::Break => self.score_config.bonus_break,
+            CharRole::Tail => 0,
         }
     }
 
