@@ -229,7 +229,10 @@ fn fuzzy_score(
     }
 
     // apply bonus for camelCases
-    if choice_role == CharRole::Head || choice_role == CharRole::Break || choice_role == CharRole::Camel {
+    if choice_role == CharRole::Head
+        || choice_role == CharRole::Break
+        || choice_role == CharRole::Camel
+    {
         score += BONUS_CAMEL;
     }
 
@@ -391,7 +394,17 @@ impl CharType {
     pub fn of(ch: char) -> Self {
         if ch == '\0' {
             CharType::Empty
-        } else if ch == ' ' || ch == '/' || ch == '\\' || ch == '|' || ch == '(' || ch == ')' || ch == '[' || ch == ']' || ch == '{' || ch == '}' {
+        } else if ch == ' '
+            || ch == '/'
+            || ch == '\\'
+            || ch == '|'
+            || ch == '('
+            || ch == ')'
+            || ch == '['
+            || ch == ']'
+            || ch == '{'
+            || ch == '}'
+        {
             CharType::HardSep
         } else if ch.is_ascii_punctuation() {
             CharType::SoftSep
@@ -404,7 +417,6 @@ impl CharType {
         }
     }
 }
-
 
 /// Ref: https://github.com/llvm-mirror/clang-tools-extra/blob/master/clangd/FuzzyMatch.cpp
 ///
@@ -437,20 +449,27 @@ impl CharRole {
         Self::of_type(CharType::of(prev), CharType::of(cur))
     }
     pub fn of_type(prev: CharType, cur: CharType) -> Self {
-        use CharType::*;
         use CharRole::*;
+        use CharType::*;
         match (prev, cur) {
             (Empty, _) | (HardSep, _) => Head,
             (SoftSep, _) => Break,
             (Lower, Upper) | (Number, Upper) => Camel,
-            _ => Tail
+            _ => Tail,
         }
     }
 }
 
+use crate::util::{char_equal, cheap_matches};
 use std::cell::RefCell;
 use thread_local::CachedThreadLocal;
-use crate::util::{char_equal, cheap_matches};
+
+#[derive(Eq, PartialEq, Debug, Copy, Clone)]
+enum CaseMatching {
+    Respect,
+    Ignore,
+    Smart,
+}
 
 /// Fuzzy matching is a sub problem is sequence alignment.
 /// Specifically what we'd like to implement is sequence alignment with affine gap penalty.
@@ -501,6 +520,7 @@ use crate::util::{char_equal, cheap_matches};
 pub struct SkimMatcherV2 {
     score_config: SkimScoreConfig,
     element_limit: usize,
+    case: CaseMatching,
 
     m_cache: CachedThreadLocal<RefCell<Vec<MatrixCell>>>,
     p_cache: CachedThreadLocal<RefCell<Vec<MatrixCell>>>,
@@ -510,9 +530,11 @@ impl Default for SkimMatcherV2 {
     fn default() -> Self {
         Self {
             score_config: SkimScoreConfig::default(),
+            element_limit: 0,
+            case: CaseMatching::Smart,
+
             m_cache: CachedThreadLocal::new(),
             p_cache: CachedThreadLocal::new(),
-            element_limit: 0,
         }
     }
 }
@@ -525,6 +547,21 @@ impl SkimMatcherV2 {
 
     pub fn element_limit(mut self, elements: usize) -> Self {
         self.element_limit = elements;
+        self
+    }
+
+    pub fn ignore_case(mut self) -> Self {
+        self.case = CaseMatching::Ignore;
+        self
+    }
+
+    pub fn smart_case(mut self) -> Self {
+        self.case = CaseMatching::Smart;
+        self
+    }
+
+    pub fn respect_case(mut self) -> Self {
+        self.case = CaseMatching::Respect;
         self
     }
 
@@ -681,7 +718,12 @@ impl SkimMatcherV2 {
             return Some((0, Vec::new()));
         }
 
-        let case_sensitive = self.contains_upper(pattern);
+        let case_sensitive = match self.case {
+            CaseMatching::Respect => true,
+            CaseMatching::Ignore => false,
+            CaseMatching::Smart => self.contains_upper(pattern),
+        };
+
         let compressed = !with_pos;
 
         if !cheap_matches(choice, pattern, case_sensitive) {
@@ -744,6 +786,10 @@ impl SkimMatcherV2 {
                 };
             }
             positions.reverse();
+        }
+
+        if !self.use_cache {
+            self.m_cache.clear();
         }
 
         Some((score as i64, positions))
@@ -1022,11 +1068,6 @@ mod tests {
         assert!(matcher.fuzzy_match("axbycz", "abc").is_some());
         assert!(matcher.fuzzy_match("axbycz", "xyz").is_some());
 
-        // smart case
-        assert!(matcher.fuzzy_match("aBc", "abc").is_some());
-        assert!(matcher.fuzzy_match("aBc", "aBc").is_some());
-        assert!(matcher.fuzzy_match("aBc", "aBC").is_none());
-
         assert_eq!(
             &wrap_fuzzy_match(&matcher, "axbycz", "abc").unwrap(),
             "[a]x[b]y[c]z"
@@ -1039,6 +1080,24 @@ mod tests {
             &wrap_fuzzy_match(&matcher, "Hello, 世界", "H世").unwrap(),
             "[H]ello, [世]界"
         );
+    }
+
+    #[test]
+    fn test_case_option_v2() {
+        let matcher = SkimMatcherV2::default().ignore_case();
+        assert!(matcher.fuzzy_match("aBc", "abc").is_some());
+        assert!(matcher.fuzzy_match("aBc", "aBc").is_some());
+        assert!(matcher.fuzzy_match("aBc", "aBC").is_some());
+
+        let matcher = SkimMatcherV2::default().respect_case();
+        assert!(matcher.fuzzy_match("aBc", "abc").is_none());
+        assert!(matcher.fuzzy_match("aBc", "aBc").is_some());
+        assert!(matcher.fuzzy_match("aBc", "aBC").is_none());
+
+        let matcher = SkimMatcherV2::default().smart_case();
+        assert!(matcher.fuzzy_match("aBc", "abc").is_some());
+        assert!(matcher.fuzzy_match("aBc", "aBc").is_some());
+        assert!(matcher.fuzzy_match("aBc", "aBC").is_none());
     }
 
     #[test]
