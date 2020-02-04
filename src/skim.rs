@@ -449,13 +449,11 @@ impl CharRole {
         Self::of_type(CharType::of(prev), CharType::of(cur))
     }
     pub fn of_type(prev: CharType, cur: CharType) -> Self {
-        use CharRole::*;
-        use CharType::*;
         match (prev, cur) {
-            (Empty, _) | (HardSep, _) => Head,
-            (SoftSep, _) => Break,
-            (Lower, Upper) | (Number, Upper) => Camel,
-            _ => Tail,
+            (CharType::Empty, _) | (CharType::HardSep, _) => CharRole::Head,
+            (CharType::SoftSep, _) => CharRole::Break,
+            (CharType::Lower, CharType::Upper) | (CharType::Number, CharType::Upper) => CharRole::Camel,
+            _ => CharRole::Tail,
         }
     }
 }
