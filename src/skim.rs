@@ -521,6 +521,7 @@ pub struct SkimMatcherV2 {
     score_config: SkimScoreConfig,
     element_limit: usize,
     case: CaseMatching,
+    use_cache: bool,
 
     m_cache: CachedThreadLocal<RefCell<Vec<MatrixCell>>>,
     p_cache: CachedThreadLocal<RefCell<Vec<MatrixCell>>>,
@@ -532,6 +533,7 @@ impl Default for SkimMatcherV2 {
             score_config: SkimScoreConfig::default(),
             element_limit: 0,
             case: CaseMatching::Smart,
+            use_cache: true,
 
             m_cache: CachedThreadLocal::new(),
             p_cache: CachedThreadLocal::new(),
@@ -562,6 +564,11 @@ impl SkimMatcherV2 {
 
     pub fn respect_case(mut self) -> Self {
         self.case = CaseMatching::Respect;
+        self
+    }
+
+    pub fn use_cache(mut self, use_cache: bool) -> Self {
+        self.use_cache = use_cache;
         self
     }
 
@@ -789,7 +796,9 @@ impl SkimMatcherV2 {
         }
 
         if !self.use_cache {
-            self.m_cache.clear();
+            // drop the allocated memory
+            self.m_cache.get().map(|cell| cell.replace(vec![]));
+            self.p_cache.get().map(|cell| cell.replace(vec![]));
         }
 
         Some((score as i64, positions))
