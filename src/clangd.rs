@@ -24,88 +24,146 @@ use crate::util::*;
 use crate::FuzzyMatcher;
 use std::cmp::max;
 
-pub struct ClangdMatcher {}
+#[derive(Eq, PartialEq, Debug, Copy, Clone)]
+enum CaseMatching {
+    Respect,
+    Ignore,
+    Smart,
+}
+
+pub struct ClangdMatcher {
+    case: CaseMatching,
+}
 
 impl Default for ClangdMatcher {
     fn default() -> Self {
-        Self {}
+        Self {
+            case: CaseMatching::Ignore,
+        }
+    }
+}
+
+impl ClangdMatcher {
+    pub fn ignore_case(mut self) -> Self {
+        self.case = CaseMatching::Ignore;
+        self
+    }
+
+    pub fn smart_case(mut self) -> Self {
+        self.case = CaseMatching::Smart;
+        self
+    }
+
+    pub fn respect_case(mut self) -> Self {
+        self.case = CaseMatching::Respect;
+        self
+    }
+
+    fn contains_upper(&self, string: &str) -> bool {
+        for ch in string.chars() {
+            if ch.is_ascii_uppercase() {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn is_case_sensitive(&self, pattern: &str) -> bool {
+        match self.case {
+            CaseMatching::Respect => true,
+            CaseMatching::Ignore => false,
+            CaseMatching::Smart => self.contains_upper(pattern),
+        }
     }
 }
 
 impl FuzzyMatcher for ClangdMatcher {
     fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
-        fuzzy_indices(choice, pattern)
+        let case_sensitive = self.is_case_sensitive(pattern);
+
+        if !cheap_matches(choice, pattern, case_sensitive) {
+            return None;
+        }
+
+        let num_pattern_chars = pattern.chars().count();
+        let num_choice_chars = choice.chars().count();
+
+        let dp = build_graph(choice, pattern, false, case_sensitive);
+
+        // search backwards for the matched indices
+        let mut indices_reverse = Vec::new();
+        let cell = dp[num_pattern_chars][num_choice_chars];
+
+        let (mut last_action, score) = if cell.match_score > cell.miss_score {
+            (Action::Match, cell.match_score)
+        } else {
+            (Action::Miss, cell.miss_score)
+        };
+
+        let mut row = num_pattern_chars;
+        let mut col = num_choice_chars;
+
+        while row > 0 || col > 0 {
+            if last_action == Action::Match {
+                indices_reverse.push(col - 1);
+            }
+
+            let cell = &dp[row][col];
+            if last_action == Action::Match {
+                last_action = cell.last_action_match;
+                row -= 1;
+                col -= 1;
+            } else {
+                last_action = cell.last_action_miss;
+                col -= 1;
+            }
+        }
+
+        indices_reverse.reverse();
+        Some((adjust_score(score, num_choice_chars), indices_reverse))
     }
 
     fn fuzzy_match(&self, choice: &str, pattern: &str) -> Option<i64> {
-        fuzzy_match(choice, pattern)
+        let case_sensitive = self.is_case_sensitive(pattern);
+        if !cheap_matches(choice, pattern, case_sensitive) {
+            return None;
+        }
+
+        let num_pattern_chars = pattern.chars().count();
+        let num_choice_chars = choice.chars().count();
+
+        let dp = build_graph(choice, pattern, true, case_sensitive);
+
+        let cell = dp[num_pattern_chars & 1][num_choice_chars];
+        let score = max(cell.match_score, cell.miss_score);
+
+        Some(adjust_score(score, num_choice_chars))
     }
 }
 
 /// fuzzy match `line` with `pattern`, returning the score and indices of matches
 pub fn fuzzy_indices(line: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
-    if !cheap_matches(line, pattern, false) {
-        return None;
-    }
-
-    let num_pattern_chars = pattern.chars().count();
-    let num_line_chars = line.chars().count();
-
-    let dp = build_graph(line, pattern, false);
-
-    // search backwards for the matched indices
-    let mut indices_reverse = Vec::new();
-    let cell = dp[num_pattern_chars][num_line_chars];
-
-    let (mut last_action, score) = if cell.match_score > cell.miss_score {
-        (Action::Match, cell.match_score)
-    } else {
-        (Action::Miss, cell.miss_score)
-    };
-
-    let mut row = num_pattern_chars;
-    let mut col = num_line_chars;
-
-    while row > 0 || col > 0 {
-        if last_action == Action::Match {
-            indices_reverse.push(col - 1);
-        }
-
-        let cell = &dp[row][col];
-        if last_action == Action::Match {
-            last_action = cell.last_action_match;
-            row -= 1;
-            col -= 1;
-        } else {
-            last_action = cell.last_action_miss;
-            col -= 1;
-        }
-    }
-
-    indices_reverse.reverse();
-    Some((adjust_score(score, num_line_chars), indices_reverse))
+    ClangdMatcher::default()
+        .ignore_case()
+        .fuzzy_indices(line, pattern)
 }
 
 /// fuzzy match `line` with `pattern`, returning the score(the larger the better) on match
 pub fn fuzzy_match(line: &str, pattern: &str) -> Option<i64> {
-    if !cheap_matches(line, pattern, false) {
-        return None;
-    }
-
-    let num_pattern_chars = pattern.chars().count();
-    let num_line_chars = line.chars().count();
-
-    let dp = build_graph(line, pattern, true);
-
-    let cell = dp[num_pattern_chars & 1][num_line_chars];
-    let score = max(cell.match_score, cell.miss_score);
-
-    Some(adjust_score(score, num_line_chars))
+    ClangdMatcher::default()
+        .ignore_case()
+        .fuzzy_match(line, pattern)
 }
 
 // checkout https://github.com/llvm-mirror/clang-tools-extra/blob/master/clangd/FuzzyMatch.cpp
 // for the description
-fn build_graph(line: &str, pattern: &str, compressed: bool) -> Vec<Vec<Score>> {
+fn build_graph(
+    line: &str,
+    pattern: &str,
+    compressed: bool,
+    case_sensitive: bool,
+) -> Vec<Vec<Score>> {
     let num_line_chars = line.chars().count();
     let num_pattern_chars = pattern.chars().count();
     let max_rows = if compressed { 2 } else { num_pattern_chars + 1 };
@@ -164,7 +222,7 @@ fn build_graph(line: &str, pattern: &str, compressed: bool) -> Vec<Vec<Score>> {
             // what if we want to match current line character?
             // so we need to calculate the cases where the pre pattern character is matched/missed
             let pre_match = &dp[prev_row_idx][line_idx];
-            let match_match_score = if allow_match(pat_ch, line_ch, Action::Match) {
+            let match_match_score = if allow_match(pat_ch, line_ch, case_sensitive) {
                 pre_match.match_score
                     + match_bonus(
                         pat_idx,
@@ -179,7 +237,7 @@ fn build_graph(line: &str, pattern: &str, compressed: bool) -> Vec<Vec<Score>> {
                 AWFUL_SCORE
             };
 
-            let miss_match_score = if allow_match(pat_ch, line_ch, Action::Miss) {
+            let miss_match_score = if allow_match(pat_ch, line_ch, case_sensitive) {
                 pre_match.miss_score
                     + match_bonus(
                         pat_idx,
@@ -263,8 +321,8 @@ fn skip_penalty(_ch_idx: usize, ch: char, last_action: Action) -> i64 {
     score
 }
 
-fn allow_match(pat_ch: char, line_ch: char, _last_action: Action) -> bool {
-    pat_ch.to_ascii_lowercase() == line_ch.to_ascii_lowercase()
+fn allow_match(pat_ch: char, line_ch: char, case_sensitive: bool) -> bool {
+    char_equal(pat_ch, line_ch, case_sensitive)
 }
 
 fn match_bonus(
