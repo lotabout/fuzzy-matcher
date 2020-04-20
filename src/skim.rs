@@ -37,6 +37,8 @@ impl Default for SkimMatcher {
     }
 }
 
+// The V1 matcher is based on ForrestTheWoods's post
+// https://www.forrestthewoods.com/blog/reverse_engineering_sublime_texts_fuzzy_match/
 impl FuzzyMatcher for SkimMatcher {
     fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
         fuzzy_indices(choice, pattern)

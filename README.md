@@ -44,7 +44,7 @@ assert_eq!(indices, [0, 2, 4]);
 The skim is currently used by [skim](https://github.com/lotabout/skim), a
 fuzzy finder.
 
-Skim V2:
+#### Skim V2
 
 - Just like fzf v2, the algorithm is based on Smith-Waterman algorithm which
     is normally used in DNA sequence alignment
@@ -56,6 +56,13 @@ Skim V2:
     `fuzzy_match` which will compress the table for dynamic programming.
 - V2 matcher has an option to set the max element of the score matrix, if
     `m*n` exceeded the limit, it will fallback to a linear search.
+
+#### Skim V1
+
+- It's based on Smith's post [Reverse Engineering Sublime Text’s Fuzzy Match](https://www.forrestthewoods.com/blog/reverse_engineering_sublime_texts_fuzzy_match/)
+- The implementation here actually has some flaws that don't perform well
+    in certain cases.
+- It's recommended to checkout original implementation in [C++](https://github.com/forrestthewoods/lib_fts/blob/master/code/fts_fuzzy_match.h) and [JavaScript](https://github.com/forrestthewoods/lib_fts/blob/master/code/fts_fuzzy_match.js)
 
 ### Clangd
 
