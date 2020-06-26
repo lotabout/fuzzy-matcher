@@ -23,7 +23,7 @@ pub fn main() {
     }
 
     if &pattern == "" {
-        println!("Usage: echo <piped_input> | fz --algo [skim|skim_v1|cland] <pattern>");
+        eprintln!("Usage: echo <piped_input> | fz --algo [skim|skim_v1|clangd] <pattern>");
         exit(1);
     }
 
@@ -31,7 +31,7 @@ pub fn main() {
         Some("skim") | Some("skim_v2") => Box::new(SkimMatcherV2::default()),
         Some("skim_v1") => Box::new(SkimMatcher::default()),
         Some("clangd") => Box::new(ClangdMatcher::default()),
-        _ => panic!("Algorithm not support {:?}", algorithm),
+        _ => panic!("Algorithm not supported: {:?}", algorithm),
     };
 
     let stdin = io::stdin();
