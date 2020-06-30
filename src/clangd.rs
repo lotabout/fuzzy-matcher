@@ -21,7 +21,7 @@
 ///! https://github.com/llvm-mirror/clang-tools-extra/blob/master/clangd/FuzzyMatch.cpp
 ///! Also check: https://github.com/lewang/flx/issues/98
 use crate::util::*;
-use crate::FuzzyMatcher;
+use crate::{FuzzyMatcher, IndexType, ScoreType};
 use std::cmp::max;
 
 #[derive(Eq, PartialEq, Debug, Copy, Clone)]
@@ -79,7 +79,7 @@ impl ClangdMatcher {
 }
 
 impl FuzzyMatcher for ClangdMatcher {
-    fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
+    fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
         let case_sensitive = self.is_case_sensitive(pattern);
 
         if !cheap_matches(choice, pattern, case_sensitive) {
@@ -92,7 +92,7 @@ impl FuzzyMatcher for ClangdMatcher {
         let dp = build_graph(choice, pattern, false, case_sensitive);
 
         // search backwards for the matched indices
-        let mut indices_reverse = Vec::new();
+        let mut indices_reverse = Vec::with_capacity(num_pattern_chars);
         let cell = dp[num_pattern_chars][num_choice_chars];
 
         let (mut last_action, score) = if cell.match_score > cell.miss_score {
@@ -106,7 +106,7 @@ impl FuzzyMatcher for ClangdMatcher {
 
         while row > 0 || col > 0 {
             if last_action == Action::Match {
-                indices_reverse.push(col - 1);
+                indices_reverse.push((col - 1) as IndexType);
             }
 
             let cell = &dp[row][col];
@@ -124,7 +124,7 @@ impl FuzzyMatcher for ClangdMatcher {
         Some((adjust_score(score, num_choice_chars), indices_reverse))
     }
 
-    fn fuzzy_match(&self, choice: &str, pattern: &str) -> Option<i64> {
+    fn fuzzy_match(&self, choice: &str, pattern: &str) -> Option<ScoreType> {
         let case_sensitive = self.is_case_sensitive(pattern);
         if !cheap_matches(choice, pattern, case_sensitive) {
             return None;
@@ -143,14 +143,14 @@ impl FuzzyMatcher for ClangdMatcher {
 }
 
 /// fuzzy match `line` with `pattern`, returning the score and indices of matches
-pub fn fuzzy_indices(line: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
+pub fn fuzzy_indices(line: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
     ClangdMatcher::default()
         .ignore_case()
         .fuzzy_indices(line, pattern)
 }
 
 /// fuzzy match `line` with `pattern`, returning the score(the larger the better) on match
-pub fn fuzzy_match(line: &str, pattern: &str) -> Option<i64> {
+pub fn fuzzy_match(line: &str, pattern: &str) -> Option<ScoreType> {
     ClangdMatcher::default()
         .ignore_case()
         .fuzzy_match(line, pattern)
@@ -274,12 +274,12 @@ fn build_graph(
     dp
 }
 
-fn adjust_score(score: i64, num_line_chars: usize) -> i64 {
+fn adjust_score(score: ScoreType, num_line_chars: usize) -> ScoreType {
     // line width will affect 10 scores
-    score - (((num_line_chars + 1) as f64).ln().floor() as i64)
+    score - (((num_line_chars + 1) as f64).ln().floor() as ScoreType)
 }
 
-const AWFUL_SCORE: i64 = -(1 << 62);
+const AWFUL_SCORE: ScoreType = -(1 << 30);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum Action {
@@ -291,8 +291,8 @@ enum Action {
 struct Score {
     pub last_action_miss: Action,
     pub last_action_match: Action,
-    pub miss_score: i64,
-    pub match_score: i64,
+    pub miss_score: ScoreType,
+    pub match_score: ScoreType,
 }
 
 impl Default for Score {
@@ -306,7 +306,7 @@ impl Default for Score {
     }
 }
 
-fn skip_penalty(_ch_idx: usize, ch: char, last_action: Action) -> i64 {
+fn skip_penalty(_ch_idx: usize, ch: char, last_action: Action) -> ScoreType {
     let mut score = 1;
     if last_action == Action::Match {
         // Non-consecutive match.
@@ -333,7 +333,7 @@ fn match_bonus(
     line_ch: char,
     line_prev_ch: char,
     last_action: Action,
-) -> i64 {
+) -> ScoreType {
     let mut score = 10;
     let pat_role = char_role(pat_prev_ch, pat_ch);
     let line_role = char_role(line_prev_ch, line_ch);

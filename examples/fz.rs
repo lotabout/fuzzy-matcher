@@ -6,6 +6,11 @@ use std::io::{self, BufRead};
 use std::process::exit;
 use termion::style::{Invert, Reset};
 
+#[cfg(not(feature = "compact"))]
+type IndexType = usize;
+#[cfg(feature = "compact")]
+type IndexType = u32;
+
 pub fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -44,12 +49,12 @@ pub fn main() {
     }
 }
 
-fn wrap_matches(line: &str, indices: &[usize]) -> String {
+fn wrap_matches(line: &str, indices: &[IndexType]) -> String {
     let mut ret = String::new();
     let mut peekable = indices.iter().peekable();
     for (idx, ch) in line.chars().enumerate() {
-        let next_id = **peekable.peek().unwrap_or(&&line.len());
-        if next_id == idx {
+        let next_id = **peekable.peek().unwrap_or(&&(line.len() as IndexType));
+        if next_id == (idx as IndexType) {
             ret.push_str(format!("{}{}{}", Invert, ch, Reset).as_str());
             peekable.next();
         } else {

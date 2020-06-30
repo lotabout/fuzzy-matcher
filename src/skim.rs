@@ -14,20 +14,20 @@ use crate::skim::Movement::{Match, Skip};
 ///! let (score, indices) = matcher.fuzzy_indices("axbycz", "abc").unwrap();
 ///! assert_eq!(indices, [0, 2, 4]);
 ///! ```
-use crate::FuzzyMatcher;
+use crate::{FuzzyMatcher, IndexType, ScoreType};
 use std::cmp::max;
 use std::ptr;
 
-const BONUS_MATCHED: i64 = 4;
-const BONUS_CASE_MATCH: i64 = 4;
-const BONUS_UPPER_MATCH: i64 = 6;
-const BONUS_ADJACENCY: i64 = 10;
-const BONUS_SEPARATOR: i64 = 8;
-const BONUS_CAMEL: i64 = 8;
-const PENALTY_CASE_UNMATCHED: i64 = -1;
-const PENALTY_LEADING: i64 = -6; // penalty applied for every letter before the first match
-const PENALTY_MAX_LEADING: i64 = -18; // maxing penalty for leading letters
-const PENALTY_UNMATCHED: i64 = -2;
+const BONUS_MATCHED: ScoreType = 4;
+const BONUS_CASE_MATCH: ScoreType = 4;
+const BONUS_UPPER_MATCH: ScoreType = 6;
+const BONUS_ADJACENCY: ScoreType = 10;
+const BONUS_SEPARATOR: ScoreType = 8;
+const BONUS_CAMEL: ScoreType = 8;
+const PENALTY_CASE_UNMATCHED: ScoreType = -1;
+const PENALTY_LEADING: ScoreType = -6; // penalty applied for every letter before the first match
+const PENALTY_MAX_LEADING: ScoreType = -18; // maxing penalty for leading letters
+const PENALTY_UNMATCHED: ScoreType = -2;
 
 pub struct SkimMatcher {}
 
@@ -40,16 +40,16 @@ impl Default for SkimMatcher {
 // The V1 matcher is based on ForrestTheWoods's post
 // https://www.forrestthewoods.com/blog/reverse_engineering_sublime_texts_fuzzy_match/
 impl FuzzyMatcher for SkimMatcher {
-    fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
+    fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
         fuzzy_indices(choice, pattern)
     }
 
-    fn fuzzy_match(&self, choice: &str, pattern: &str) -> Option<i64> {
+    fn fuzzy_match(&self, choice: &str, pattern: &str) -> Option<ScoreType> {
         fuzzy_match(choice, pattern)
     }
 }
 
-pub fn fuzzy_match(choice: &str, pattern: &str) -> Option<i64> {
+pub fn fuzzy_match(choice: &str, pattern: &str) -> Option<ScoreType> {
     if pattern.is_empty() {
         return Some(0);
     }
@@ -65,7 +65,7 @@ pub fn fuzzy_match(choice: &str, pattern: &str) -> Option<i64> {
     Some(final_score)
 }
 
-pub fn fuzzy_indices(choice: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
+pub fn fuzzy_indices(choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
     if pattern.is_empty() {
         return Some((0, Vec::new()));
     }
@@ -82,7 +82,7 @@ pub fn fuzzy_indices(choice: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
     let mut pat_idx = scores.len() as i64 - 1;
     while pat_idx >= 0 {
         let status = scores[pat_idx as usize][next_col];
-        next_col = status.back_ref;
+        next_col = status.back_ref as usize;
         picked.push(status.idx);
         pat_idx -= 1;
     }
@@ -92,11 +92,11 @@ pub fn fuzzy_indices(choice: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
 
 #[derive(Clone, Copy, Debug)]
 struct MatchingStatus {
-    pub idx: usize,
-    pub score: i64,
-    pub final_score: i64,
-    pub adj_num: usize,
-    pub back_ref: usize,
+    pub idx: IndexType,
+    pub score: ScoreType,
+    pub final_score: ScoreType,
+    pub adj_num: IndexType,
+    pub back_ref: IndexType,
 }
 
 impl Default for MatchingStatus {
@@ -123,9 +123,16 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
         let mut choice_prev_ch = '\0';
         for (idx, ch) in choice.chars().enumerate() {
             if ch.to_ascii_lowercase() == pat_ch.to_ascii_lowercase() && idx >= match_start_idx {
-                let score = fuzzy_score(ch, idx, choice_prev_ch, pat_ch, pat_idx, pat_prev_ch);
+                let score = fuzzy_score(
+                    ch,
+                    idx as IndexType,
+                    choice_prev_ch,
+                    pat_ch,
+                    pat_idx as IndexType,
+                    pat_prev_ch,
+                );
                 vec.push(MatchingStatus {
-                    idx,
+                    idx: idx as IndexType,
                     score,
                     final_score: score,
                     adj_num: 1,
@@ -139,7 +146,7 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
             // not matched
             return None;
         }
-        match_start_idx = vec[0].idx + 1;
+        match_start_idx = vec[0].idx as usize + 1;
         scores.push(vec);
         pat_prev_ch = pat_ch;
     }
@@ -160,7 +167,7 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
             };
 
             let mut score_before_idx = prev.final_score - prev.score + next.score;
-            score_before_idx += PENALTY_UNMATCHED * ((next.idx - prev.idx) as i64);
+            score_before_idx += PENALTY_UNMATCHED * ((next.idx - prev.idx) as ScoreType);
             score_before_idx -= if prev.adj_num == 0 {
                 BONUS_ADJACENCY
             } else {
@@ -178,12 +185,12 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
                     final_score += if adj_num == 0 {
                         BONUS_ADJACENCY
                     } else {
-                        PENALTY_UNMATCHED * adj_num as i64
+                        PENALTY_UNMATCHED * adj_num as ScoreType
                     };
                     (back_ref, final_score, adj_num)
                 })
                 .max_by_key(|&(_, x, _)| x)
-                .unwrap_or((prev.back_ref, score_before_idx, prev.adj_num));
+                .unwrap_or((prev.back_ref as usize, score_before_idx, prev.adj_num));
 
             cur_row[idx] = if idx > 0 && score < score_before_idx {
                 MatchingStatus {
@@ -195,7 +202,7 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
             } else {
                 MatchingStatus {
                     final_score: score,
-                    back_ref,
+                    back_ref: back_ref as IndexType,
                     adj_num,
                     ..next
                 }
@@ -209,12 +216,12 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
 // judge how many scores the current index should get
 fn fuzzy_score(
     choice_ch: char,
-    choice_idx: usize,
+    choice_idx: IndexType,
     choice_prev_ch: char,
     pat_ch: char,
-    pat_idx: usize,
+    pat_idx: IndexType,
     _pat_prev_ch: char,
-) -> i64 {
+) -> ScoreType {
     let mut score = BONUS_MATCHED;
 
     let choice_prev_ch_type = CharType::of(choice_prev_ch);
@@ -244,7 +251,10 @@ fn fuzzy_score(
     }
 
     if pat_idx == 0 {
-        score += max((choice_idx as i64) * PENALTY_LEADING, PENALTY_MAX_LEADING);
+        score += max(
+            (choice_idx as ScoreType) * PENALTY_LEADING,
+            PENALTY_MAX_LEADING,
+        );
     }
 
     score
@@ -454,7 +464,9 @@ impl CharRole {
         match (prev, cur) {
             (CharType::Empty, _) | (CharType::HardSep, _) => CharRole::Head,
             (CharType::SoftSep, _) => CharRole::Break,
-            (CharType::Lower, CharType::Upper) | (CharType::Number, CharType::Upper) => CharRole::Camel,
+            (CharType::Lower, CharType::Upper) | (CharType::Number, CharType::Upper) => {
+                CharRole::Camel
+            }
             _ => CharRole::Tail,
         }
     }
@@ -720,7 +732,12 @@ impl SkimMatcherV2 {
         false
     }
 
-    pub fn fuzzy(&self, choice: &str, pattern: &str, with_pos: bool) -> Option<(i64, Vec<usize>)> {
+    pub fn fuzzy(
+        &self,
+        choice: &str,
+        pattern: &str,
+        with_pos: bool,
+    ) -> Option<(ScoreType, Vec<IndexType>)> {
         if pattern.is_empty() {
             return Some((0, Vec::new()));
         }
@@ -769,7 +786,7 @@ impl SkimMatcherV2 {
             .max_by_key(|&(_, x)| x.score)
             .expect("fuzzy_matcher failed to iterate over last_row");
 
-        let mut positions = Vec::new();
+        let mut positions = if with_pos { Vec::with_capacity(num_char_pattern)} else {Vec::new()};
         if with_pos {
             let mut i = m.rows - 1;
             let mut j = pat_idx;
@@ -777,7 +794,7 @@ impl SkimMatcherV2 {
             let mut current_move = Match;
             while i > 0 && j > 0 {
                 if current_move == Match {
-                    positions.push(j - 1);
+                    positions.push((j - 1) as IndexType);
                 }
 
                 current_move = matrix.get_movement(i, j);
@@ -801,7 +818,7 @@ impl SkimMatcherV2 {
             self.p_cache.get().map(|cell| cell.replace(vec![]));
         }
 
-        Some((score as i64, positions))
+        Some((score as ScoreType, positions))
     }
 
     /// Borrowed from fzf v1, if the memory limit exceeded, fallback to simple linear search
@@ -811,7 +828,7 @@ impl SkimMatcherV2 {
         pattern: &str,
         case_sensitive: bool,
         with_pos: bool,
-    ) -> Option<(i64, Vec<usize>)> {
+    ) -> Option<(ScoreType, Vec<IndexType>)> {
         let mut choice_iter = choice.char_indices().peekable();
         let mut pattern_iter = pattern.chars().peekable();
         let mut o_start_byte = None;
@@ -843,7 +860,7 @@ impl SkimMatcherV2 {
         let end_byte = choice_iter
             .next()
             .map(|(idx, _)| idx)
-            .unwrap_or(choice.len());
+            .unwrap_or_else(|| choice.len());
 
         // scan backward to find the first match of whole pattern
         let mut o_nearest_start_byte = None;
@@ -881,7 +898,7 @@ impl SkimMatcherV2 {
         start_chars: usize,
         case_sensitive: bool,
         with_pos: bool,
-    ) -> (i64, Vec<usize>) {
+    ) -> (ScoreType, Vec<IndexType>) {
         let mut pos = Vec::new();
 
         let choice_iter = choice[start_bytes..end_bytes].chars().enumerate();
@@ -912,7 +929,7 @@ impl SkimMatcherV2 {
                 case_sensitive,
             ) {
                 if with_pos {
-                    pos.push(c_idx + start_chars);
+                    pos.push((c_idx + start_chars) as IndexType);
                 }
                 score += match_score as i32;
                 score += consecutive * self.score_config.bonus_consecutive;
@@ -933,16 +950,16 @@ impl SkimMatcherV2 {
             prev_ch = c;
         }
 
-        (score as i64, pos)
+        (score as ScoreType, pos)
     }
 }
 
 impl FuzzyMatcher for SkimMatcherV2 {
-    fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
+    fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
         self.fuzzy(choice, pattern, true)
     }
 
-    fn fuzzy_match(&self, choice: &str, pattern: &str) -> Option<i64> {
+    fn fuzzy_match(&self, choice: &str, pattern: &str) -> Option<ScoreType> {
         self.fuzzy(choice, pattern, false).map(|(score, _)| score)
     }
 }
