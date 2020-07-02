@@ -1,5 +1,5 @@
 use fuzzy_matcher::clangd::ClangdMatcher;
-use fuzzy_matcher::skim::{SkimMatcher, SkimMatcherV2};
+use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use std::env;
 use std::io::{self, BufRead};
@@ -28,13 +28,12 @@ pub fn main() {
     }
 
     if &pattern == "" {
-        eprintln!("Usage: echo <piped_input> | fz --algo [skim|skim_v1|clangd] <pattern>");
+        eprintln!("Usage: echo <piped_input> | fz --algo [skim|clangd] <pattern>");
         exit(1);
     }
 
     let matcher: Box<dyn FuzzyMatcher> = match algorithm {
         Some("skim") | Some("skim_v2") => Box::new(SkimMatcherV2::default()),
-        Some("skim_v1") => Box::new(SkimMatcher::default()),
         Some("clangd") => Box::new(ClangdMatcher::default()),
         _ => panic!("Algorithm not supported: {:?}", algorithm),
     };
