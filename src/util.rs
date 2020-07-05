@@ -1,4 +1,4 @@
-use crate::FuzzyMatcher;
+use crate::{FuzzyMatcher, IndexType, ScoreType};
 
 pub fn cheap_matches(choice: &str, pattern: &str, case_sensitive: bool) -> bool {
     let mut pattern_iter = pattern.chars().peekable();
@@ -104,7 +104,7 @@ pub fn filter_and_sort(
     pattern: &str,
     lines: &[&'static str],
 ) -> Vec<&'static str> {
-    let mut lines_with_score: Vec<(i64, &'static str)> = lines
+    let mut lines_with_score: Vec<(ScoreType, &'static str)> = lines
         .iter()
         .filter_map(|&s| matcher.fuzzy_match(s, pattern).map(|score| (score, s)))
         .collect();
@@ -116,12 +116,12 @@ pub fn filter_and_sort(
 }
 
 #[allow(dead_code)]
-pub fn wrap_matches(line: &str, indices: &[usize]) -> String {
+pub fn wrap_matches(line: &str, indices: &[IndexType]) -> String {
     let mut ret = String::new();
     let mut peekable = indices.iter().peekable();
     for (idx, ch) in line.chars().enumerate() {
-        let next_id = **peekable.peek().unwrap_or(&&line.len());
-        if next_id == idx {
+        let next_id = **peekable.peek().unwrap_or(&&(line.len() as IndexType));
+        if next_id == (idx as IndexType) {
             ret.push_str(format!("[{}]", ch).as_str());
             peekable.next();
         } else {

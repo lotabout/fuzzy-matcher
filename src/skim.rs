@@ -1,4 +1,13 @@
+#![allow(deprecated)]
+
+use std::cell::RefCell;
+use std::cmp::max;
+use std::ptr;
+
+use thread_local::CachedThreadLocal;
+
 use crate::skim::Movement::{Match, Skip};
+use crate::util::{char_equal, cheap_matches};
 ///! The fuzzy matching algorithm used by skim
 ///!
 ///! # Example:
@@ -14,21 +23,21 @@ use crate::skim::Movement::{Match, Skip};
 ///! let (score, indices) = matcher.fuzzy_indices("axbycz", "abc").unwrap();
 ///! assert_eq!(indices, [0, 2, 4]);
 ///! ```
-use crate::FuzzyMatcher;
-use std::cmp::max;
-use std::ptr;
+use crate::{FuzzyMatcher, IndexType, ScoreType};
+use std::fmt::Formatter;
 
-const BONUS_MATCHED: i64 = 4;
-const BONUS_CASE_MATCH: i64 = 4;
-const BONUS_UPPER_MATCH: i64 = 6;
-const BONUS_ADJACENCY: i64 = 10;
-const BONUS_SEPARATOR: i64 = 8;
-const BONUS_CAMEL: i64 = 8;
-const PENALTY_CASE_UNMATCHED: i64 = -1;
-const PENALTY_LEADING: i64 = -6; // penalty applied for every letter before the first match
-const PENALTY_MAX_LEADING: i64 = -18; // maxing penalty for leading letters
-const PENALTY_UNMATCHED: i64 = -2;
+const BONUS_MATCHED: ScoreType = 4;
+const BONUS_CASE_MATCH: ScoreType = 4;
+const BONUS_UPPER_MATCH: ScoreType = 6;
+const BONUS_ADJACENCY: ScoreType = 10;
+const BONUS_SEPARATOR: ScoreType = 8;
+const BONUS_CAMEL: ScoreType = 8;
+const PENALTY_CASE_UNMATCHED: ScoreType = -1;
+const PENALTY_LEADING: ScoreType = -6; // penalty applied for every letter before the first match
+const PENALTY_MAX_LEADING: ScoreType = -18; // maxing penalty for leading letters
+const PENALTY_UNMATCHED: ScoreType = -2;
 
+#[deprecated(since="0.3.5", note="Please use SkimMatcherV2 instead")]
 pub struct SkimMatcher {}
 
 impl Default for SkimMatcher {
@@ -37,19 +46,22 @@ impl Default for SkimMatcher {
     }
 }
 
-// The V1 matcher is based on ForrestTheWoods's post
-// https://www.forrestthewoods.com/blog/reverse_engineering_sublime_texts_fuzzy_match/
+/// The V1 matcher is based on ForrestTheWoods's post
+/// https://www.forrestthewoods.com/blog/reverse_engineering_sublime_texts_fuzzy_match/
+///
+/// V1 algorithm is deprecated, checkout `FuzzyMatcherV2`
 impl FuzzyMatcher for SkimMatcher {
-    fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
+    fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
         fuzzy_indices(choice, pattern)
     }
 
-    fn fuzzy_match(&self, choice: &str, pattern: &str) -> Option<i64> {
+    fn fuzzy_match(&self, choice: &str, pattern: &str) -> Option<ScoreType> {
         fuzzy_match(choice, pattern)
     }
 }
 
-pub fn fuzzy_match(choice: &str, pattern: &str) -> Option<i64> {
+#[deprecated(since="0.3.5", note="Please use SkimMatcherV2 instead")]
+pub fn fuzzy_match(choice: &str, pattern: &str) -> Option<ScoreType> {
     if pattern.is_empty() {
         return Some(0);
     }
@@ -65,7 +77,8 @@ pub fn fuzzy_match(choice: &str, pattern: &str) -> Option<i64> {
     Some(final_score)
 }
 
-pub fn fuzzy_indices(choice: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
+#[deprecated(since="0.3.5", note="Please use SkimMatcherV2 instead")]
+pub fn fuzzy_indices(choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
     if pattern.is_empty() {
         return Some((0, Vec::new()));
     }
@@ -82,7 +95,7 @@ pub fn fuzzy_indices(choice: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
     let mut pat_idx = scores.len() as i64 - 1;
     while pat_idx >= 0 {
         let status = scores[pat_idx as usize][next_col];
-        next_col = status.back_ref;
+        next_col = status.back_ref as usize;
         picked.push(status.idx);
         pat_idx -= 1;
     }
@@ -92,11 +105,11 @@ pub fn fuzzy_indices(choice: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
 
 #[derive(Clone, Copy, Debug)]
 struct MatchingStatus {
-    pub idx: usize,
-    pub score: i64,
-    pub final_score: i64,
-    pub adj_num: usize,
-    pub back_ref: usize,
+    pub idx: IndexType,
+    pub score: ScoreType,
+    pub final_score: ScoreType,
+    pub adj_num: IndexType,
+    pub back_ref: IndexType,
 }
 
 impl Default for MatchingStatus {
@@ -123,9 +136,16 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
         let mut choice_prev_ch = '\0';
         for (idx, ch) in choice.chars().enumerate() {
             if ch.to_ascii_lowercase() == pat_ch.to_ascii_lowercase() && idx >= match_start_idx {
-                let score = fuzzy_score(ch, idx, choice_prev_ch, pat_ch, pat_idx, pat_prev_ch);
+                let score = fuzzy_score(
+                    ch,
+                    idx as IndexType,
+                    choice_prev_ch,
+                    pat_ch,
+                    pat_idx as IndexType,
+                    pat_prev_ch,
+                );
                 vec.push(MatchingStatus {
-                    idx,
+                    idx: idx as IndexType,
                     score,
                     final_score: score,
                     adj_num: 1,
@@ -139,7 +159,7 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
             // not matched
             return None;
         }
-        match_start_idx = vec[0].idx + 1;
+        match_start_idx = vec[0].idx as usize + 1;
         scores.push(vec);
         pat_prev_ch = pat_ch;
     }
@@ -160,7 +180,7 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
             };
 
             let mut score_before_idx = prev.final_score - prev.score + next.score;
-            score_before_idx += PENALTY_UNMATCHED * ((next.idx - prev.idx) as i64);
+            score_before_idx += PENALTY_UNMATCHED * ((next.idx - prev.idx) as ScoreType);
             score_before_idx -= if prev.adj_num == 0 {
                 BONUS_ADJACENCY
             } else {
@@ -178,12 +198,12 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
                     final_score += if adj_num == 0 {
                         BONUS_ADJACENCY
                     } else {
-                        PENALTY_UNMATCHED * adj_num as i64
+                        PENALTY_UNMATCHED * adj_num as ScoreType
                     };
                     (back_ref, final_score, adj_num)
                 })
                 .max_by_key(|&(_, x, _)| x)
-                .unwrap_or((prev.back_ref, score_before_idx, prev.adj_num));
+                .unwrap_or((prev.back_ref as usize, score_before_idx, prev.adj_num));
 
             cur_row[idx] = if idx > 0 && score < score_before_idx {
                 MatchingStatus {
@@ -195,7 +215,7 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
             } else {
                 MatchingStatus {
                     final_score: score,
-                    back_ref,
+                    back_ref: back_ref as IndexType,
                     adj_num,
                     ..next
                 }
@@ -209,12 +229,12 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
 // judge how many scores the current index should get
 fn fuzzy_score(
     choice_ch: char,
-    choice_idx: usize,
+    choice_idx: IndexType,
     choice_prev_ch: char,
     pat_ch: char,
-    pat_idx: usize,
+    pat_idx: IndexType,
     _pat_prev_ch: char,
-) -> i64 {
+) -> ScoreType {
     let mut score = BONUS_MATCHED;
 
     let choice_prev_ch_type = CharType::of(choice_prev_ch);
@@ -244,7 +264,10 @@ fn fuzzy_score(
     }
 
     if pat_idx == 0 {
-        score += max((choice_idx as i64) * PENALTY_LEADING, PENALTY_MAX_LEADING);
+        score += max(
+            (choice_idx as ScoreType) * PENALTY_LEADING,
+            PENALTY_MAX_LEADING,
+        );
     }
 
     score
@@ -318,7 +341,7 @@ enum Movement {
 }
 
 /// Inner state of the score matrix
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 struct MatrixCell {
     pub movement: Movement,
     pub score: i32, // The max score of align pattern[..i] & choice[..j]
@@ -371,6 +394,32 @@ impl<'a> ScoreMatrix<'a> {
     fn get_row(&self, row: usize) -> &[MatrixCell] {
         let start = row * self.cols;
         &self.matrix[start..start + self.cols]
+    }
+}
+
+impl<'a> std::fmt::Debug for ScoreMatrix<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for row in 0..self.rows {
+            for col in 0..self.cols {
+                let score = self.get_score(row, col);
+                write!(
+                    f,
+                    "{:4}/{}  ",
+                    if score == MATRIX_CELL_NEG_INFINITY {
+                        -999
+                    } else {
+                        score
+                    },
+                    match self.get_movement(row, col) {
+                        Match => 'M',
+                        Skip => 'S',
+                    }
+                )?;
+            }
+            writeln!(f)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -454,15 +503,13 @@ impl CharRole {
         match (prev, cur) {
             (CharType::Empty, _) | (CharType::HardSep, _) => CharRole::Head,
             (CharType::SoftSep, _) => CharRole::Break,
-            (CharType::Lower, CharType::Upper) | (CharType::Number, CharType::Upper) => CharRole::Camel,
+            (CharType::Lower, CharType::Upper) | (CharType::Number, CharType::Upper) => {
+                CharRole::Camel
+            }
             _ => CharRole::Tail,
         }
     }
 }
-
-use crate::util::{char_equal, cheap_matches};
-use std::cell::RefCell;
-use thread_local::CachedThreadLocal;
 
 #[derive(Eq, PartialEq, Debug, Copy, Clone)]
 enum CaseMatching {
@@ -510,14 +557,20 @@ enum CaseMatching {
 /// P[i][j] = max(gap_start + gap_extend + M[i][j-1], gap_extend + P[i][j-1])
 /// ```
 ///
+/// Besides, since we are doing fuzzy matching, we'll prefer some pattern over others.
+/// So we'll calculate in-place bonus for each character. e.g. bonus for camel cases.
+///
 /// In summary:
 ///
 /// ```text
+/// B[j] = in_place_bonus_of(j)
 /// M[i][j] = match(i, j) + max(M[i-1][j-1] + consecutive, P[i-1][j-1])
 /// M[i][j] = -infinity if p[i] and c[j] do not match
 /// P[i][j] = max(gap_start + gap_extend + M[i][j-1], gap_extend + P[i][j-1])
 /// ```
 pub struct SkimMatcherV2 {
+    debug: bool,
+
     score_config: SkimScoreConfig,
     element_limit: usize,
     case: CaseMatching,
@@ -530,6 +583,7 @@ pub struct SkimMatcherV2 {
 impl Default for SkimMatcherV2 {
     fn default() -> Self {
         Self {
+            debug: false,
             score_config: SkimScoreConfig::default(),
             element_limit: 0,
             case: CaseMatching::Smart,
@@ -572,6 +626,11 @@ impl SkimMatcherV2 {
         self
     }
 
+    pub fn debug(mut self, debug: bool) -> Self {
+        self.debug = debug;
+        self
+    }
+
     /// Build the score matrix using the algorithm described above
     fn build_score_matrix(
         &self,
@@ -582,6 +641,11 @@ impl SkimMatcherV2 {
         compressed: bool,
         case_sensitive: bool,
     ) {
+        let mut in_place_bonuses = vec![0; m.cols];
+        let mut last_bonus = vec![0; m.cols];
+
+        self.build_in_place_bonus(choice, &mut in_place_bonuses);
+
         for i in 0..m.rows {
             m.set_score(i, 0, MATRIX_CELL_NEG_INFINITY);
             m.set_movement(i, 0, Movement::Skip);
@@ -605,36 +669,45 @@ impl SkimMatcherV2 {
 
         // update the matrix;
         for (i, p_ch) in pattern.chars().enumerate() {
-            let mut prev_ch = '\0';
+            let row = self.adjust_row_idx(i + 1, compressed);
+            let row_prev = self.adjust_row_idx(i, compressed);
+            last_bonus[0] = 0;
 
             for (j, c_ch) in choice.chars().enumerate() {
-                let row = self.adjust_row_idx(i + 1, compressed);
-                let row_prev = self.adjust_row_idx(i, compressed);
                 let col = j + 1;
                 let col_prev = j;
 
                 // update M matrix
                 // M[i][j] = match(i, j) + max(M[i-1][j-1], P[i-1][j-1])
-                if let Some(match_score) =
-                    self.calculate_match_score(prev_ch, c_ch, p_ch, i, j, case_sensitive)
+                if let Some(cur_match_score) =
+                    self.calculate_match_score(c_ch, p_ch, case_sensitive)
                 {
                     let prev_match_score = m.get_score(row_prev, col_prev);
                     let prev_skip_score = p.get_score(row_prev, col_prev);
-                    if prev_match_score >= prev_skip_score {
-                        m.set_movement(row, col, Movement::Match);
-                    }
-                    m.set_score(
-                        row,
-                        col,
-                        (match_score as i32)
-                            + max(
-                                prev_match_score + self.score_config.bonus_consecutive,
-                                prev_skip_score,
-                            ),
+
+                    let prev_match_bonus = last_bonus[col_prev];
+                    let in_place_bonus = in_place_bonuses[col];
+
+                    let consecutive_bonus = max(
+                        prev_match_bonus,
+                        max(in_place_bonus, self.score_config.bonus_consecutive),
                     );
+                    last_bonus[col] = consecutive_bonus;
+
+                    let score_match = prev_match_score + consecutive_bonus;
+                    let score_skip = prev_skip_score + in_place_bonus;
+
+                    if score_match >= score_skip {
+                        m.set_score(row, col, score_match + cur_match_score as i32);
+                        m.set_movement(row, col, Movement::Match);
+                    } else {
+                        m.set_score(row, col, score_skip + cur_match_score as i32);
+                        m.set_movement(row, col, Movement::Skip);
+                    }
                 } else {
                     m.set_score(row, col, MATRIX_CELL_NEG_INFINITY);
                     m.set_movement(row, col, Movement::Skip);
+                    last_bonus[col] = 0;
                 }
 
                 // update P matrix
@@ -650,9 +723,22 @@ impl SkimMatcherV2 {
                     p.set_score(row, col, prev_skip_score);
                     p.set_movement(row, col, Movement::Skip);
                 }
-
-                prev_ch = c_ch;
             }
+        }
+    }
+
+    /// check bonus for start of camel case, etc.
+    fn build_in_place_bonus(&self, choice: &str, b: &mut [i32]) {
+        let mut prev_ch = '\0';
+        for (j, c_ch) in choice.chars().enumerate() {
+            let prev_ch_type = CharType::of(prev_ch);
+            let ch_type = CharType::of(c_ch);
+            b[j + 1] = self.in_place_bonus(prev_ch_type, ch_type);
+            prev_ch = c_ch;
+        }
+
+        if b.len() > 1 {
+            b[1] *= self.score_config.bonus_first_char_multiplier;
         }
     }
 
@@ -668,30 +754,13 @@ impl SkimMatcherV2 {
 
     /// Calculate the matching score of the characters
     /// return None if not matched.
-    fn calculate_match_score(
-        &self,
-        prev_ch: char,
-        c: char,
-        p: char,
-        c_idx: usize,
-        _p_idx: usize,
-        case_sensitive: bool,
-    ) -> Option<u16> {
+    fn calculate_match_score(&self, c: char, p: char, case_sensitive: bool) -> Option<u16> {
         if !char_equal(c, p, case_sensitive) {
             return None;
         }
 
         let score = self.score_config.score_match;
-
-        // check bonus for start of camel case, etc.
-        let prev_ch_type = CharType::of(prev_ch);
-        let ch_type = CharType::of(c);
-        let mut bonus = self.in_place_bonus(prev_ch_type, ch_type);
-
-        // bonus for matching the start of the whole choice string
-        if c_idx == 0 {
-            bonus *= self.score_config.bonus_first_char_multiplier;
-        }
+        let mut bonus = 0;
 
         // penalty on case mismatch
         if !case_sensitive && p != c {
@@ -701,6 +770,7 @@ impl SkimMatcherV2 {
         Some(max(0, score + bonus) as u16)
     }
 
+    #[inline]
     fn in_place_bonus(&self, prev_char_type: CharType, char_type: CharType) -> i32 {
         match CharRole::of_type(prev_char_type, char_type) {
             CharRole::Head => self.score_config.bonus_head,
@@ -720,7 +790,12 @@ impl SkimMatcherV2 {
         false
     }
 
-    pub fn fuzzy(&self, choice: &str, pattern: &str, with_pos: bool) -> Option<(i64, Vec<usize>)> {
+    pub fn fuzzy(
+        &self,
+        choice: &str,
+        pattern: &str,
+        with_pos: bool,
+    ) -> Option<(ScoreType, Vec<IndexType>)> {
         if pattern.is_empty() {
             return Some((0, Vec::new()));
         }
@@ -769,7 +844,11 @@ impl SkimMatcherV2 {
             .max_by_key(|&(_, x)| x.score)
             .expect("fuzzy_matcher failed to iterate over last_row");
 
-        let mut positions = Vec::new();
+        let mut positions = if with_pos {
+            Vec::with_capacity(num_char_pattern)
+        } else {
+            Vec::new()
+        };
         if with_pos {
             let mut i = m.rows - 1;
             let mut j = pat_idx;
@@ -777,7 +856,7 @@ impl SkimMatcherV2 {
             let mut current_move = Match;
             while i > 0 && j > 0 {
                 if current_move == Match {
-                    positions.push(j - 1);
+                    positions.push((j - 1) as IndexType);
                 }
 
                 current_move = matrix.get_movement(i, j);
@@ -795,13 +874,18 @@ impl SkimMatcherV2 {
             positions.reverse();
         }
 
+        if self.debug {
+            println!("M:\n{:?}", m);
+            println!("P:\n{:?}", m);
+        }
+
         if !self.use_cache {
             // drop the allocated memory
             self.m_cache.get().map(|cell| cell.replace(vec![]));
             self.p_cache.get().map(|cell| cell.replace(vec![]));
         }
 
-        Some((score as i64, positions))
+        Some((score as ScoreType, positions))
     }
 
     /// Borrowed from fzf v1, if the memory limit exceeded, fallback to simple linear search
@@ -811,7 +895,7 @@ impl SkimMatcherV2 {
         pattern: &str,
         case_sensitive: bool,
         with_pos: bool,
-    ) -> Option<(i64, Vec<usize>)> {
+    ) -> Option<(ScoreType, Vec<IndexType>)> {
         let mut choice_iter = choice.char_indices().peekable();
         let mut pattern_iter = pattern.chars().peekable();
         let mut o_start_byte = None;
@@ -843,7 +927,7 @@ impl SkimMatcherV2 {
         let end_byte = choice_iter
             .next()
             .map(|(idx, _)| idx)
-            .unwrap_or(choice.len());
+            .unwrap_or_else(|| choice.len());
 
         // scan backward to find the first match of whole pattern
         let mut o_nearest_start_byte = None;
@@ -881,7 +965,7 @@ impl SkimMatcherV2 {
         start_chars: usize,
         case_sensitive: bool,
         with_pos: bool,
-    ) -> (i64, Vec<usize>) {
+    ) -> (ScoreType, Vec<IndexType>) {
         let mut pos = Vec::new();
 
         let choice_iter = choice[start_bytes..end_bytes].chars().enumerate();
@@ -893,7 +977,7 @@ impl SkimMatcherV2 {
 
         let mut score: i32 = 0;
         let mut in_gap = false;
-        let mut consecutive = 0;
+        let mut prev_match_bonus = 0;
 
         for (c_idx, c) in choice_iter {
             let op = pattern_iter.peek();
@@ -901,24 +985,30 @@ impl SkimMatcherV2 {
                 break;
             }
 
-            let (p_idx, p) = *op.unwrap();
+            let prev_ch_type = CharType::of(prev_ch);
+            let ch_type = CharType::of(c);
+            let in_place_bonus = self.in_place_bonus(prev_ch_type, ch_type);
 
-            if let Some(match_score) = self.calculate_match_score(
-                prev_ch,
-                c,
-                p,
-                c_idx + start_chars,
-                p_idx,
-                case_sensitive,
-            ) {
+            let (_p_idx, p) = *op.unwrap();
+
+            if let Some(match_score) = self.calculate_match_score(c, p, case_sensitive) {
                 if with_pos {
-                    pos.push(c_idx + start_chars);
+                    pos.push((c_idx + start_chars) as IndexType);
                 }
+
                 score += match_score as i32;
-                score += consecutive * self.score_config.bonus_consecutive;
+
+                let consecutive_bonus = max(
+                    prev_match_bonus,
+                    max(in_place_bonus, self.score_config.bonus_consecutive),
+                );
+                prev_match_bonus = consecutive_bonus;
+
+                if !in_gap {
+                    score += consecutive_bonus;
+                }
 
                 in_gap = false;
-                consecutive += 1;
                 let _ = pattern_iter.next();
             } else {
                 if !in_gap {
@@ -927,39 +1017,41 @@ impl SkimMatcherV2 {
 
                 score += self.score_config.gap_extension;
                 in_gap = true;
-                consecutive = 0;
+                prev_match_bonus = 0;
             }
 
             prev_ch = c;
         }
 
-        (score as i64, pos)
+        (score as ScoreType, pos)
     }
 }
 
 impl FuzzyMatcher for SkimMatcherV2 {
-    fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
+    fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
         self.fuzzy(choice, pattern, true)
     }
 
-    fn fuzzy_match(&self, choice: &str, pattern: &str) -> Option<i64> {
+    fn fuzzy_match(&self, choice: &str, pattern: &str) -> Option<ScoreType> {
         self.fuzzy(choice, pattern, false).map(|(score, _)| score)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::util::{assert_order, wrap_matches};
+
+    use super::*;
 
     fn wrap_fuzzy_match(matcher: &dyn FuzzyMatcher, line: &str, pattern: &str) -> Option<String> {
         let (_score, indices) = matcher.fuzzy_indices(line, pattern)?;
+        println!("score: {:?}, indices: {:?}", _score, indices);
         Some(wrap_matches(line, &indices))
     }
 
     #[test]
     fn test_match_or_not() {
-        let matcher = SkimMatcher::default();
+        let matcher = SkimMatcherV2::default();
         assert_eq!(Some(0), matcher.fuzzy_match("", ""));
         assert_eq!(Some(0), matcher.fuzzy_match("abcdefaghi", ""));
         assert_eq!(None, matcher.fuzzy_match("", "a"));
@@ -984,7 +1076,7 @@ mod tests {
 
     #[test]
     fn test_match_quality() {
-        let matcher = SkimMatcher::default();
+        let matcher = SkimMatcherV2::default().ignore_case();
 
         // initials
         assert_order(&matcher, "ab", &["ab", "aoo_boo", "acb"]);
@@ -996,8 +1088,8 @@ mod tests {
             &[
                 "camel case",
                 "camelCase",
-                "camelcase",
                 "CamelCase",
+                "camelcase",
                 "camel ace",
             ],
         );
@@ -1067,7 +1159,7 @@ mod tests {
 
     #[test]
     fn test_match_or_not_v2() {
-        let matcher = SkimMatcherV2::default();
+        let matcher = SkimMatcherV2::default().debug(true);
 
         assert_eq!(matcher.fuzzy_match("", ""), Some(0));
         assert_eq!(matcher.fuzzy_match("abcdefaghi", ""), Some(0));

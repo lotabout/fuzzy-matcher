@@ -1,6 +1,6 @@
 [package]
 name = "fuzzy-matcher"
-version = "0.3.4"
+version = "0.3.5"
 authors = ["Jinzhou Zhang <lotabout@gmail.com>"]
 description = "Fuzzy Matching Library"
 documentation = "https://docs.rs/fuzzy-matcher"
@@ -10,6 +10,11 @@ readme  = "README.md"
 keywords = ["fuzzy", "match", "text", "search"]
 license = "MIT"
 edition = "2018"
+
+[features]
+default = []
+compact = []
+
 
 [dependencies]
 thread_local = "1.0.0"
