@@ -2,12 +2,10 @@
 
 use std::cell::RefCell;
 use std::cmp::max;
-use std::ptr;
+use std::fmt::Formatter;
 
 use thread_local::CachedThreadLocal;
 
-use crate::skim::Movement::{Match, Skip};
-use crate::util::{char_equal, cheap_matches};
 ///! The fuzzy matching algorithm used by skim
 ///!
 ///! # Example:
@@ -24,7 +22,8 @@ use crate::util::{char_equal, cheap_matches};
 ///! assert_eq!(indices, [0, 2, 4]);
 ///! ```
 use crate::{FuzzyMatcher, IndexType, ScoreType};
-use std::fmt::Formatter;
+use crate::skim::Movement::{Match, Skip};
+use crate::util::{char_equal, cheap_matches};
 
 const BONUS_MATCHED: ScoreType = 4;
 const BONUS_CASE_MATCH: ScoreType = 4;
@@ -33,11 +32,13 @@ const BONUS_ADJACENCY: ScoreType = 10;
 const BONUS_SEPARATOR: ScoreType = 8;
 const BONUS_CAMEL: ScoreType = 8;
 const PENALTY_CASE_UNMATCHED: ScoreType = -1;
-const PENALTY_LEADING: ScoreType = -6; // penalty applied for every letter before the first match
-const PENALTY_MAX_LEADING: ScoreType = -18; // maxing penalty for leading letters
+const PENALTY_LEADING: ScoreType = -6;
+// penalty applied for every letter before the first match
+const PENALTY_MAX_LEADING: ScoreType = -18;
+// maxing penalty for leading letters
 const PENALTY_UNMATCHED: ScoreType = -2;
 
-#[deprecated(since="0.3.5", note="Please use SkimMatcherV2 instead")]
+#[deprecated(since = "0.3.5", note = "Please use SkimMatcherV2 instead")]
 pub struct SkimMatcher {}
 
 impl Default for SkimMatcher {
@@ -60,7 +61,7 @@ impl FuzzyMatcher for SkimMatcher {
     }
 }
 
-#[deprecated(since="0.3.5", note="Please use SkimMatcherV2 instead")]
+#[deprecated(since = "0.3.5", note = "Please use SkimMatcherV2 instead")]
 pub fn fuzzy_match(choice: &str, pattern: &str) -> Option<ScoreType> {
     if pattern.is_empty() {
         return Some(0);
@@ -77,7 +78,7 @@ pub fn fuzzy_match(choice: &str, pattern: &str) -> Option<ScoreType> {
     Some(final_score)
 }
 
-#[deprecated(since="0.3.5", note="Please use SkimMatcherV2 instead")]
+#[deprecated(since = "0.3.5", note = "Please use SkimMatcherV2 instead")]
 pub fn fuzzy_indices(choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
     if pattern.is_empty() {
         return Some((0, Vec::new()));
@@ -341,18 +342,31 @@ enum Movement {
 }
 
 /// Inner state of the score matrix
-#[derive(Copy, Clone)]
+// Implementation detail: tried to pad to 16B
+// will store the m and p matrix together
+#[derive(Clone)]
 struct MatrixCell {
-    pub movement: Movement,
-    pub score: i32, // The max score of align pattern[..i] & choice[..j]
+    pub m_move: Movement,
+    pub m_score: i32,
+    pub p_move: Movement,
+    pub p_score: i32, // The max score of align pattern[..i] & choice[..j]
+
+    // temporary fields (make use the rest of the padding)
+    pub matched: bool,
+    pub bonus: i32,
 }
 
 const MATRIX_CELL_NEG_INFINITY: i32 = std::i16::MIN as i32;
+
 impl Default for MatrixCell {
     fn default() -> Self {
         Self {
-            movement: Skip,
-            score: MATRIX_CELL_NEG_INFINITY,
+            m_move: Skip,
+            m_score: MATRIX_CELL_NEG_INFINITY,
+            p_move: Skip,
+            p_score: MATRIX_CELL_NEG_INFINITY,
+            matched: false,
+            bonus: 0,
         }
     }
 }
@@ -372,23 +386,8 @@ impl<'a> ScoreMatrix<'a> {
     }
 
     #[inline]
-    fn get_score(&self, row: usize, col: usize) -> i32 {
-        self.matrix[row * self.cols + col].score
-    }
-
-    #[inline]
-    fn get_movement(&self, row: usize, col: usize) -> Movement {
-        self.matrix[row * self.cols + col].movement
-    }
-
-    #[inline]
-    fn set_score(&mut self, row: usize, col: usize, score: i32) {
-        self.matrix[row * self.cols + col].score = score;
-    }
-
-    #[inline]
-    fn set_movement(&mut self, row: usize, col: usize, movement: Movement) {
-        self.matrix[row * self.cols + col].movement = movement;
+    fn get_index(&self, row: usize, col: usize) -> usize {
+        row * self.cols + col
     }
 
     fn get_row(&self, row: usize) -> &[MatrixCell] {
@@ -397,20 +396,56 @@ impl<'a> ScoreMatrix<'a> {
     }
 }
 
+impl<'a> std::ops::Index<(usize, usize)> for ScoreMatrix<'a> {
+    type Output = MatrixCell;
+
+    fn index(&self, index: (usize, usize)) -> &Self::Output {
+        &self.matrix[self.get_index(index.0, index.1)]
+    }
+}
+
+impl<'a> std::ops::IndexMut<(usize, usize)> for ScoreMatrix<'a> {
+    fn index_mut(&mut self, index: (usize, usize)) -> &mut Self::Output {
+        &mut self.matrix[self.get_index(index.0, index.1)]
+    }
+}
+
 impl<'a> std::fmt::Debug for ScoreMatrix<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let _ = writeln!(f, "M score:");
         for row in 0..self.rows {
             for col in 0..self.cols {
-                let score = self.get_score(row, col);
+                let cell = &self[(row, col)];
                 write!(
                     f,
                     "{:4}/{}  ",
-                    if score == MATRIX_CELL_NEG_INFINITY {
+                    if cell.m_score == MATRIX_CELL_NEG_INFINITY {
                         -999
                     } else {
-                        score
+                        cell.m_score
                     },
-                    match self.get_movement(row, col) {
+                    match cell.m_move {
+                        Match => 'M',
+                        Skip => 'S',
+                    }
+                )?;
+            }
+            writeln!(f)?;
+        }
+
+        let _ = writeln!(f, "P score:");
+        for row in 0..self.rows {
+            for col in 0..self.cols {
+                let cell = &self[(row, col)];
+                write!(
+                    f,
+                    "{:4}/{}  ",
+                    if cell.p_score == MATRIX_CELL_NEG_INFINITY {
+                        -999
+                    } else {
+                        cell.p_score
+                    },
+                    match cell.p_move {
                         Match => 'M',
                         Skip => 'S',
                     }
@@ -443,28 +478,13 @@ enum CharType {
 
 impl CharType {
     pub fn of(ch: char) -> Self {
-        if ch == '\0' {
-            CharType::Empty
-        } else if ch == ' '
-            || ch == '/'
-            || ch == '\\'
-            || ch == '|'
-            || ch == '('
-            || ch == ')'
-            || ch == '['
-            || ch == ']'
-            || ch == '{'
-            || ch == '}'
-        {
-            CharType::HardSep
-        } else if ch.is_ascii_punctuation() {
-            CharType::SoftSep
-        } else if ch.is_ascii_digit() {
-            CharType::Number
-        } else if ch.is_ascii_uppercase() {
-            CharType::Upper
-        } else {
-            CharType::Lower
+        match ch {
+            '\0' => CharType::Empty,
+            ' ' | '/' | '\\' | '|' | '(' | ')' | '[' | ']' | '{' | '}' => CharType::HardSep,
+            '!'..='\'' | '*'..= '.' | ':'..='@' | '^'..='`' | '~' => CharType::SoftSep,
+            '0'..='9' => CharType::Number,
+            'A'..='Z' => CharType::Upper,
+            _ => CharType::Lower,
         }
     }
 }
@@ -577,7 +597,6 @@ pub struct SkimMatcherV2 {
     use_cache: bool,
 
     m_cache: CachedThreadLocal<RefCell<Vec<MatrixCell>>>,
-    p_cache: CachedThreadLocal<RefCell<Vec<MatrixCell>>>,
 }
 
 impl Default for SkimMatcherV2 {
@@ -590,7 +609,6 @@ impl Default for SkimMatcherV2 {
             use_cache: true,
 
             m_cache: CachedThreadLocal::new(),
-            p_cache: CachedThreadLocal::new(),
         }
     }
 }
@@ -635,93 +653,94 @@ impl SkimMatcherV2 {
     fn build_score_matrix(
         &self,
         m: &mut ScoreMatrix,
-        p: &mut ScoreMatrix,
         choice: &str,
         pattern: &str,
         compressed: bool,
         case_sensitive: bool,
     ) {
         let mut in_place_bonuses = vec![0; m.cols];
-        let mut last_bonus = vec![0; m.cols];
 
         self.build_in_place_bonus(choice, &mut in_place_bonuses);
 
         for i in 0..m.rows {
-            m.set_score(i, 0, MATRIX_CELL_NEG_INFINITY);
-            m.set_movement(i, 0, Movement::Skip);
+            let index = m.get_index(i, 0);
+            m.matrix[index].m_score = MATRIX_CELL_NEG_INFINITY;
+            m.matrix[index].m_move = Movement::Skip;
+
+            m.matrix[index].p_score = MATRIX_CELL_NEG_INFINITY;
+            m.matrix[index].p_move = Movement::Skip;
+
+            m.matrix[index].bonus = 0;
         }
 
         for j in 0..m.cols {
-            m.set_score(0, j, MATRIX_CELL_NEG_INFINITY);
-            m.set_movement(0, j, Movement::Skip);
-        }
+            let index = m.get_index(0, j);
+            m.matrix[index].m_score = MATRIX_CELL_NEG_INFINITY;
+            m.matrix[index].m_move = Movement::Skip;
 
-        for i in 0..p.rows {
-            p.set_score(i, 0, MATRIX_CELL_NEG_INFINITY);
-            p.set_movement(i, 0, Movement::Skip);
-        }
+            // p[0][j]: the score of best alignment of p[] and c[..=j] where c[j] is not matched
+            m.matrix[index].p_score = self.score_config.gap_extension;
+            m.matrix[index].p_move = Movement::Skip;
 
-        // p[0][j]: the score of best alignment of p[] and c[..=j] where c[j] is not matched
-        for j in 0..p.cols {
-            p.set_score(0, j, self.score_config.gap_extension);
-            p.set_movement(0, j, Movement::Skip);
+            m.matrix[index].bonus = 0;
         }
 
         // update the matrix;
         for (i, p_ch) in pattern.chars().enumerate() {
             let row = self.adjust_row_idx(i + 1, compressed);
             let row_prev = self.adjust_row_idx(i, compressed);
-            last_bonus[0] = 0;
 
             for (j, c_ch) in choice.chars().enumerate() {
                 let col = j + 1;
                 let col_prev = j;
+                let idx_cur = m.get_index(row, col);
+                let idx_last = m.get_index(row, col_prev);
+                let idx_prev = m.get_index(row_prev, col_prev);
 
                 // update M matrix
                 // M[i][j] = match(i, j) + max(M[i-1][j-1], P[i-1][j-1])
                 if let Some(cur_match_score) =
-                    self.calculate_match_score(c_ch, p_ch, case_sensitive)
+                self.calculate_match_score(c_ch, p_ch, case_sensitive)
                 {
-                    let prev_match_score = m.get_score(row_prev, col_prev);
-                    let prev_skip_score = p.get_score(row_prev, col_prev);
-
-                    let prev_match_bonus = last_bonus[col_prev];
+                    let prev_match_score = m.matrix[idx_prev].m_score;
+                    let prev_skip_score = m.matrix[idx_prev].p_score;
+                    let prev_match_bonus = m.matrix[idx_last].bonus;
                     let in_place_bonus = in_place_bonuses[col];
 
                     let consecutive_bonus = max(
                         prev_match_bonus,
                         max(in_place_bonus, self.score_config.bonus_consecutive),
                     );
-                    last_bonus[col] = consecutive_bonus;
+                    m.matrix[idx_last].bonus = consecutive_bonus;
 
                     let score_match = prev_match_score + consecutive_bonus;
                     let score_skip = prev_skip_score + in_place_bonus;
 
                     if score_match >= score_skip {
-                        m.set_score(row, col, score_match + cur_match_score as i32);
-                        m.set_movement(row, col, Movement::Match);
+                        m.matrix[idx_cur].m_score = score_match + cur_match_score as i32;
+                        m.matrix[idx_cur].m_move = Movement::Match;
                     } else {
-                        m.set_score(row, col, score_skip + cur_match_score as i32);
-                        m.set_movement(row, col, Movement::Skip);
+                        m.matrix[idx_cur].m_score = score_skip + cur_match_score as i32;
+                        m.matrix[idx_cur].m_move = Movement::Skip;
                     }
                 } else {
-                    m.set_score(row, col, MATRIX_CELL_NEG_INFINITY);
-                    m.set_movement(row, col, Movement::Skip);
-                    last_bonus[col] = 0;
+                    m.matrix[idx_cur].m_score = MATRIX_CELL_NEG_INFINITY;
+                    m.matrix[idx_cur].m_move = Movement::Skip;
+                    m.matrix[idx_cur].bonus = 0;
                 }
 
                 // update P matrix
                 // P[i][j] = max(gap_start + gap_extend + M[i][j-1], gap_extend + P[i][j-1])
                 let prev_match_score = self.score_config.gap_start
                     + self.score_config.gap_extension
-                    + m.get_score(row, col_prev);
-                let prev_skip_score = self.score_config.gap_extension + p.get_score(row, col_prev);
+                    + m.matrix[idx_last].m_score;
+                let prev_skip_score = self.score_config.gap_extension + m.matrix[idx_last].p_score;
                 if prev_match_score >= prev_skip_score {
-                    p.set_score(row, col, prev_match_score);
-                    p.set_movement(row, col, Movement::Match);
+                    m.matrix[idx_cur].p_score = prev_match_score;
+                    m.matrix[idx_cur].p_move = Movement::Match;
                 } else {
-                    p.set_score(row, col, prev_skip_score);
-                    p.set_movement(row, col, Movement::Skip);
+                    m.matrix[idx_cur].p_score = prev_skip_score;
+                    m.matrix[idx_cur].p_move = Movement::Skip;
                 }
             }
         }
@@ -830,18 +849,13 @@ impl SkimMatcherV2 {
             .get_or(|| RefCell::new(Vec::new()))
             .borrow_mut();
         let mut m = ScoreMatrix::new(&mut m, rows, cols);
-        let mut p = self
-            .p_cache
-            .get_or(|| RefCell::new(Vec::new()))
-            .borrow_mut();
-        let mut p = ScoreMatrix::new(&mut p, rows, cols);
 
-        self.build_score_matrix(&mut m, &mut p, choice, pattern, compressed, case_sensitive);
+        self.build_score_matrix(&mut m, choice, pattern, compressed, case_sensitive);
         let last_row = m.get_row(self.adjust_row_idx(num_char_pattern, compressed));
-        let (pat_idx, &MatrixCell { score, .. }) = last_row
+        let (pat_idx, &MatrixCell { m_score, .. }) = last_row
             .iter()
             .enumerate()
-            .max_by_key(|&(_, x)| x.score)
+            .max_by_key(|&(_, x)| x.m_score)
             .expect("fuzzy_matcher failed to iterate over last_row");
 
         let mut positions = if with_pos {
@@ -852,40 +866,43 @@ impl SkimMatcherV2 {
         if with_pos {
             let mut i = m.rows - 1;
             let mut j = pat_idx;
-            let mut matrix = &m;
+            let mut track_m = true;
             let mut current_move = Match;
             while i > 0 && j > 0 {
                 if current_move == Match {
                     positions.push((j - 1) as IndexType);
                 }
 
-                current_move = matrix.get_movement(i, j);
-                if ptr::eq(matrix, &m) {
+                let cell = &m[(i, j)];
+                current_move = if track_m {
+                    cell.m_move
+                } else {
+                    cell.p_move
+                };
+                if track_m {
                     i -= 1;
                 }
 
                 j -= 1;
 
-                matrix = match current_move {
-                    Match => &m,
-                    Skip => &p,
+                track_m = match current_move {
+                    Match => true,
+                    Skip => false,
                 };
             }
             positions.reverse();
         }
 
         if self.debug {
-            println!("M:\n{:?}", m);
-            println!("P:\n{:?}", m);
+            println!("Matrix:\n{:?}", m);
         }
 
         if !self.use_cache {
             // drop the allocated memory
             self.m_cache.get().map(|cell| cell.replace(vec![]));
-            self.p_cache.get().map(|cell| cell.replace(vec![]));
         }
 
-        Some((score as ScoreType, positions))
+        Some((m_score as ScoreType, positions))
     }
 
     /// Borrowed from fzf v1, if the memory limit exceeded, fallback to simple linear search
@@ -1130,10 +1147,10 @@ mod tests {
         );
         assert_eq!(matcher.simple_match("", "a", false, false), None);
         assert_eq!(
-            matcher.simple_match("abcdefaghi", "中", false, false,),
+            matcher.simple_match("abcdefaghi", "中", false, false),
             None
         );
-        assert_eq!(matcher.simple_match("abc", "abx", false, false,), None);
+        assert_eq!(matcher.simple_match("abc", "abx", false, false), None);
         assert_eq!(
             matcher
                 .simple_match("axbycz", "abc", false, true)
