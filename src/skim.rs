@@ -954,7 +954,7 @@ impl SkimMatcherV2 {
             let prev_ch_type = CharType::of(prev_ch);
             let ch_type = CharType::of(choice[match_idx]);
             let in_place_bonus = self.in_place_bonus(prev_ch_type, ch_type);
-            return Some((in_place_bonus as ScoreType, vec![match_idx]));
+            return Some((in_place_bonus as ScoreType, vec![match_idx as IndexType]));
         }
 
         let mut start_idx = first_match_indices[0];
