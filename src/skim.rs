@@ -6,6 +6,8 @@ use std::fmt::Formatter;
 
 use thread_local::CachedThreadLocal;
 
+use crate::skim::Movement::{Match, Skip};
+use crate::util::{char_equal, cheap_matches};
 ///! The fuzzy matching algorithm used by skim
 ///!
 ///! # Example:
@@ -22,8 +24,6 @@ use thread_local::CachedThreadLocal;
 ///! assert_eq!(indices, [0, 2, 4]);
 ///! ```
 use crate::{FuzzyMatcher, IndexType, ScoreType};
-use crate::skim::Movement::{Match, Skip};
-use crate::util::{char_equal, cheap_matches};
 
 const BONUS_MATCHED: ScoreType = 4;
 const BONUS_CASE_MATCH: ScoreType = 4;
@@ -371,6 +371,17 @@ impl Default for MatrixCell {
     }
 }
 
+impl MatrixCell {
+    pub fn reset(&mut self) {
+        self.m_move = Skip;
+        self.m_score = MATRIX_CELL_NEG_INFINITY;
+        self.p_move = Skip;
+        self.p_score = MATRIX_CELL_NEG_INFINITY;
+        self.bonus = 0;
+        self.matched = false;
+    }
+}
+
 /// Simulate a 1-D vector as 2-D matrix
 struct ScoreMatrix<'a> {
     matrix: &'a mut [MatrixCell],
@@ -481,7 +492,7 @@ impl CharType {
         match ch {
             '\0' => CharType::Empty,
             ' ' | '/' | '\\' | '|' | '(' | ')' | '[' | ']' | '{' | '}' => CharType::HardSep,
-            '!'..='\'' | '*'..= '.' | ':'..='@' | '^'..='`' | '~' => CharType::SoftSep,
+            '!'..='\'' | '*'..='.' | ':'..='@' | '^'..='`' | '~' => CharType::SoftSep,
             '0'..='9' => CharType::Number,
             'A'..='Z' => CharType::Upper,
             _ => CharType::Lower,
@@ -655,6 +666,7 @@ impl SkimMatcherV2 {
         m: &mut ScoreMatrix,
         choice: &str,
         pattern: &str,
+        first_match_indices: &[usize],
         compressed: bool,
         case_sensitive: bool,
     ) {
@@ -662,35 +674,25 @@ impl SkimMatcherV2 {
 
         self.build_in_place_bonus(choice, &mut in_place_bonuses);
 
-        for i in 0..m.rows {
-            let index = m.get_index(i, 0);
-            m.matrix[index].m_score = MATRIX_CELL_NEG_INFINITY;
-            m.matrix[index].m_move = Movement::Skip;
-
-            m.matrix[index].p_score = MATRIX_CELL_NEG_INFINITY;
-            m.matrix[index].p_move = Movement::Skip;
-
-            m.matrix[index].bonus = 0;
+        // need to reset M[row][first_match] & M[i][j-1]
+        m[(0, 0)].reset();
+        for i in 1..m.rows {
+            m[(i, first_match_indices[i-1])].reset();
         }
 
         for j in 0..m.cols {
-            let index = m.get_index(0, j);
-            m.matrix[index].m_score = MATRIX_CELL_NEG_INFINITY;
-            m.matrix[index].m_move = Movement::Skip;
-
             // p[0][j]: the score of best alignment of p[] and c[..=j] where c[j] is not matched
-            m.matrix[index].p_score = self.score_config.gap_extension;
-            m.matrix[index].p_move = Movement::Skip;
-
-            m.matrix[index].bonus = 0;
+            m[(0, j)].reset();
+            m[(0, j)].p_score = self.score_config.gap_extension;
         }
 
         // update the matrix;
         for (i, p_ch) in pattern.chars().enumerate() {
             let row = self.adjust_row_idx(i + 1, compressed);
             let row_prev = self.adjust_row_idx(i, compressed);
+            let to_skip = first_match_indices[i];
 
-            for (j, c_ch) in choice.chars().enumerate() {
+            for (j, c_ch) in choice.chars().enumerate().skip(to_skip) {
                 let col = j + 1;
                 let col_prev = j;
                 let idx_cur = m.get_index(row, col);
@@ -700,7 +702,7 @@ impl SkimMatcherV2 {
                 // update M matrix
                 // M[i][j] = match(i, j) + max(M[i-1][j-1], P[i-1][j-1])
                 if let Some(cur_match_score) =
-                self.calculate_match_score(c_ch, p_ch, case_sensitive)
+                    self.calculate_match_score(c_ch, p_ch, case_sensitive)
                 {
                     let prev_match_score = m.matrix[idx_prev].m_score;
                     let prev_skip_score = m.matrix[idx_prev].p_score;
@@ -827,13 +829,7 @@ impl SkimMatcherV2 {
 
         let compressed = !with_pos;
 
-        if !cheap_matches(choice, pattern, case_sensitive) {
-            return None;
-        }
-
-        if pattern.is_empty() {
-            return Some((0, Vec::new()));
-        }
+        let first_match_indices = cheap_matches(choice, pattern, case_sensitive)?;
 
         let cols = choice.chars().count() + 1;
         let num_char_pattern = pattern.chars().count();
@@ -850,7 +846,14 @@ impl SkimMatcherV2 {
             .borrow_mut();
         let mut m = ScoreMatrix::new(&mut m, rows, cols);
 
-        self.build_score_matrix(&mut m, choice, pattern, compressed, case_sensitive);
+        self.build_score_matrix(
+            &mut m,
+            choice,
+            pattern,
+            &first_match_indices,
+            compressed,
+            case_sensitive,
+        );
         let last_row = m.get_row(self.adjust_row_idx(num_char_pattern, compressed));
         let (pat_idx, &MatrixCell { m_score, .. }) = last_row
             .iter()
@@ -874,11 +877,7 @@ impl SkimMatcherV2 {
                 }
 
                 let cell = &m[(i, j)];
-                current_move = if track_m {
-                    cell.m_move
-                } else {
-                    cell.p_move
-                };
+                current_move = if track_m { cell.m_move } else { cell.p_move };
                 if track_m {
                     i -= 1;
                 }
@@ -1146,10 +1145,7 @@ mod tests {
             Some((0, vec![]))
         );
         assert_eq!(matcher.simple_match("", "a", false, false), None);
-        assert_eq!(
-            matcher.simple_match("abcdefaghi", "中", false, false),
-            None
-        );
+        assert_eq!(matcher.simple_match("abcdefaghi", "中", false, false), None);
         assert_eq!(matcher.simple_match("abc", "abx", false, false), None);
         assert_eq!(
             matcher

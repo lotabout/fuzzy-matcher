@@ -1,11 +1,13 @@
 use crate::{FuzzyMatcher, IndexType, ScoreType};
 
-pub fn cheap_matches(choice: &str, pattern: &str, case_sensitive: bool) -> bool {
+pub fn cheap_matches(choice: &str, pattern: &str, case_sensitive: bool) -> Option<Vec<usize>> {
+    let mut first_match_indices = vec![];
     let mut pattern_iter = pattern.chars().peekable();
-    for c in choice.chars() {
+    for (idx, c) in choice.chars().enumerate() {
         match pattern_iter.peek() {
             Some(&p) => {
                 if char_equal(c, p, case_sensitive) {
+                    first_match_indices.push(idx);
                     let _ = pattern_iter.next();
                 }
             }
@@ -13,7 +15,11 @@ pub fn cheap_matches(choice: &str, pattern: &str, case_sensitive: bool) -> bool 
         }
     }
 
-    pattern_iter.peek().is_none()
+    if pattern_iter.peek().is_none() {
+        Some(first_match_indices)
+    } else {
+        None
+    }
 }
 
 /// Given 2 character, check if they are equal (considering ascii case)

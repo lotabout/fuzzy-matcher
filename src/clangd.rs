@@ -82,7 +82,7 @@ impl FuzzyMatcher for ClangdMatcher {
     fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
         let case_sensitive = self.is_case_sensitive(pattern);
 
-        if !cheap_matches(choice, pattern, case_sensitive) {
+        if cheap_matches(choice, pattern, case_sensitive).is_none() {
             return None;
         }
 
@@ -126,7 +126,7 @@ impl FuzzyMatcher for ClangdMatcher {
 
     fn fuzzy_match(&self, choice: &str, pattern: &str) -> Option<ScoreType> {
         let case_sensitive = self.is_case_sensitive(pattern);
-        if !cheap_matches(choice, pattern, case_sensitive) {
+        if cheap_matches(choice, pattern, case_sensitive).is_none() {
             return None;
         }
 
