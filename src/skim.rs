@@ -608,6 +608,8 @@ pub struct SkimMatcherV2 {
     use_cache: bool,
 
     m_cache: CachedThreadLocal<RefCell<Vec<MatrixCell>>>,
+    c_cache: CachedThreadLocal<RefCell<Vec<char>>>, // vector to store the characters of choice
+    p_cache: CachedThreadLocal<RefCell<Vec<char>>>, // vector to store the characters of pattern
 }
 
 impl Default for SkimMatcherV2 {
@@ -620,6 +622,8 @@ impl Default for SkimMatcherV2 {
             use_cache: true,
 
             m_cache: CachedThreadLocal::new(),
+            c_cache: CachedThreadLocal::new(),
+            p_cache: CachedThreadLocal::new(),
         }
     }
 }
@@ -664,8 +668,8 @@ impl SkimMatcherV2 {
     fn build_score_matrix(
         &self,
         m: &mut ScoreMatrix,
-        choice: &str,
-        pattern: &str,
+        choice: &[char],
+        pattern: &[char],
         first_match_indices: &[usize],
         compressed: bool,
         case_sensitive: bool,
@@ -677,7 +681,7 @@ impl SkimMatcherV2 {
         // need to reset M[row][first_match] & M[i][j-1]
         m[(0, 0)].reset();
         for i in 1..m.rows {
-            m[(i, first_match_indices[i-1])].reset();
+            m[(i, first_match_indices[i - 1])].reset();
         }
 
         for j in 0..m.cols {
@@ -687,12 +691,12 @@ impl SkimMatcherV2 {
         }
 
         // update the matrix;
-        for (i, p_ch) in pattern.chars().enumerate() {
+        for (i, &p_ch) in pattern.iter().enumerate() {
             let row = self.adjust_row_idx(i + 1, compressed);
             let row_prev = self.adjust_row_idx(i, compressed);
             let to_skip = first_match_indices[i];
 
-            for (j, c_ch) in choice.chars().enumerate().skip(to_skip) {
+            for (j, &c_ch) in choice.iter().enumerate().skip(to_skip) {
                 let col = j + 1;
                 let col_prev = j;
                 let idx_cur = m.get_index(row, col);
@@ -749,9 +753,9 @@ impl SkimMatcherV2 {
     }
 
     /// check bonus for start of camel case, etc.
-    fn build_in_place_bonus(&self, choice: &str, b: &mut [i32]) {
+    fn build_in_place_bonus(&self, choice: &[char], b: &mut [i32]) {
         let mut prev_ch = '\0';
-        for (j, c_ch) in choice.chars().enumerate() {
+        for (j, &c_ch) in choice.iter().enumerate() {
             let prev_ch_type = CharType::of(prev_ch);
             let ch_type = CharType::of(c_ch);
             b[j + 1] = self.in_place_bonus(prev_ch_type, ch_type);
@@ -829,27 +833,51 @@ impl SkimMatcherV2 {
 
         let compressed = !with_pos;
 
-        let first_match_indices = cheap_matches(choice, pattern, case_sensitive)?;
-
-        let cols = choice.chars().count() + 1;
-        let num_char_pattern = pattern.chars().count();
-        let rows = if compressed { 2 } else { num_char_pattern + 1 };
-
-        if self.element_limit > 0 && self.element_limit < rows * cols {
-            return self.simple_match(choice, pattern, case_sensitive, with_pos);
-        }
-
         // initialize the score matrix
         let mut m = self
             .m_cache
             .get_or(|| RefCell::new(Vec::new()))
             .borrow_mut();
-        let mut m = ScoreMatrix::new(&mut m, rows, cols);
+        let mut choice_chars = self
+            .c_cache
+            .get_or(|| RefCell::new(Vec::new()))
+            .borrow_mut();
+        let mut pattern_chars = self
+            .p_cache
+            .get_or(|| RefCell::new(Vec::new()))
+            .borrow_mut();
 
+        choice_chars.clear();
+        for char in choice.chars() {
+            choice_chars.push(char);
+        }
+
+        pattern_chars.clear();
+        for char in pattern.chars() {
+            pattern_chars.push(char);
+        }
+
+        let first_match_indices = cheap_matches(&choice_chars, &pattern_chars, case_sensitive)?;
+
+        let cols = choice_chars.len() + 1;
+        let num_char_pattern = pattern_chars.len();
+        let rows = if compressed { 2 } else { num_char_pattern + 1 };
+
+        if self.element_limit > 0 && self.element_limit < rows * cols {
+            return self.simple_match(
+                &choice_chars,
+                &pattern_chars,
+                &first_match_indices,
+                case_sensitive,
+                with_pos,
+            );
+        }
+
+        let mut m = ScoreMatrix::new(&mut m, rows, cols);
         self.build_score_matrix(
             &mut m,
-            choice,
-            pattern,
+            &choice_chars,
+            &pattern_chars,
             &first_match_indices,
             compressed,
             case_sensitive,
@@ -899,74 +927,57 @@ impl SkimMatcherV2 {
         if !self.use_cache {
             // drop the allocated memory
             self.m_cache.get().map(|cell| cell.replace(vec![]));
+            self.c_cache.get().map(|cell| cell.replace(vec![]));
+            self.p_cache.get().map(|cell| cell.replace(vec![]));
         }
 
         Some((m_score as ScoreType, positions))
     }
 
-    /// Borrowed from fzf v1, if the memory limit exceeded, fallback to simple linear search
     pub fn simple_match(
         &self,
-        choice: &str,
-        pattern: &str,
+        choice: &[char],
+        pattern: &[char],
+        first_match_indices: &[usize],
         case_sensitive: bool,
         with_pos: bool,
     ) -> Option<(ScoreType, Vec<IndexType>)> {
-        let mut choice_iter = choice.char_indices().peekable();
-        let mut pattern_iter = pattern.chars().peekable();
-        let mut o_start_byte = None;
-
-        // scan forward to find the first match of whole pattern
-        let mut start_chars = 0;
-        while choice_iter.peek().is_some() && pattern_iter.peek().is_some() {
-            let (byte_idx, c) = choice_iter.next().unwrap();
-            match pattern_iter.peek() {
-                Some(&p) => {
-                    if char_equal(c, p, case_sensitive) {
-                        let _ = pattern_iter.next();
-                        o_start_byte = o_start_byte.or(Some(byte_idx));
-                    }
-                }
-                None => break,
-            }
-
-            if o_start_byte.is_none() {
-                start_chars += 1;
-            }
+        if pattern.len() <= 0 {
+            return Some((0, Vec::new()));
+        } else if pattern.len() == 1 {
+            let match_idx = first_match_indices[0];
+            let prev_ch = if match_idx > 0 {
+                choice[match_idx - 1]
+            } else {
+                '\0'
+            };
+            let prev_ch_type = CharType::of(prev_ch);
+            let ch_type = CharType::of(choice[match_idx]);
+            let in_place_bonus = self.in_place_bonus(prev_ch_type, ch_type);
+            return Some((in_place_bonus as ScoreType, vec![match_idx]));
         }
 
-        if pattern_iter.peek().is_some() {
-            return None;
-        }
+        let mut start_idx = first_match_indices[0];
+        let end_idx = first_match_indices[first_match_indices.len() - 1];
 
-        let start_byte = o_start_byte.unwrap_or(0);
-        let end_byte = choice_iter
-            .next()
-            .map(|(idx, _)| idx)
-            .unwrap_or_else(|| choice.len());
-
-        // scan backward to find the first match of whole pattern
-        let mut o_nearest_start_byte = None;
-        let mut pattern_iter = pattern.chars().rev().peekable();
-        for (idx, c) in choice[start_byte..end_byte].char_indices().rev() {
+        let mut pattern_iter = pattern.iter().rev().peekable();
+        for (idx, &c) in choice[start_idx..=end_idx].iter().enumerate().rev() {
             match pattern_iter.peek() {
-                Some(&p) => {
+                Some(&&p) => {
                     if char_equal(c, p, case_sensitive) {
                         let _ = pattern_iter.next();
-                        o_nearest_start_byte = Some(idx);
+                        start_idx = idx;
                     }
                 }
                 None => break,
             }
         }
 
-        let start_byte = start_byte + o_nearest_start_byte.unwrap_or(0);
         Some(self.calculate_score_with_pos(
             choice,
             pattern,
-            start_byte,
-            end_byte,
-            start_chars,
+            start_idx,
+            end_idx,
             case_sensitive,
             with_pos,
         ))
@@ -974,18 +985,17 @@ impl SkimMatcherV2 {
 
     fn calculate_score_with_pos(
         &self,
-        choice: &str,
-        pattern: &str,
-        start_bytes: usize,
-        end_bytes: usize,
-        start_chars: usize,
+        choice: &[char],
+        pattern: &[char],
+        start_idx: usize,
+        end_idx: usize,
         case_sensitive: bool,
         with_pos: bool,
     ) -> (ScoreType, Vec<IndexType>) {
         let mut pos = Vec::new();
 
-        let choice_iter = choice[start_bytes..end_bytes].chars().enumerate();
-        let mut pattern_iter = pattern.chars().enumerate().peekable();
+        let choice_iter = choice[start_idx..=end_idx].iter().enumerate();
+        let mut pattern_iter = pattern.iter().enumerate().peekable();
 
         // unfortunately we could not get the the character before the first character's(for performance)
         // so we tread them as NonWord
@@ -995,7 +1005,7 @@ impl SkimMatcherV2 {
         let mut in_gap = false;
         let mut prev_match_bonus = 0;
 
-        for (c_idx, c) in choice_iter {
+        for (c_idx, &c) in choice_iter {
             let op = pattern_iter.peek();
             if op.is_none() {
                 break;
@@ -1005,11 +1015,11 @@ impl SkimMatcherV2 {
             let ch_type = CharType::of(c);
             let in_place_bonus = self.in_place_bonus(prev_ch_type, ch_type);
 
-            let (_p_idx, p) = *op.unwrap();
+            let (_p_idx, &p) = *op.unwrap();
 
             if let Some(match_score) = self.calculate_match_score(c, p, case_sensitive) {
                 if with_pos {
-                    pos.push((c_idx + start_chars) as IndexType);
+                    pos.push((c_idx + start_idx) as IndexType);
                 }
 
                 score += match_score as i32;
@@ -1125,45 +1135,63 @@ mod tests {
         assert_order(&matcher, "Int", &["int", "INT", "PRINT"]);
     }
 
+    fn simple_match(
+        matcher: &SkimMatcherV2,
+        choice: &str,
+        pattern: &str,
+        case_sensitive: bool,
+        with_pos: bool,
+    ) -> Option<(ScoreType, Vec<IndexType>)> {
+        let choice: Vec<char> = choice.chars().collect();
+        let pattern: Vec<char> = pattern.chars().collect();
+        let first_match_indices = cheap_matches(&choice, &pattern, case_sensitive)?;
+        matcher.simple_match(
+            &choice,
+            &pattern,
+            &first_match_indices,
+            case_sensitive,
+            with_pos,
+        )
+    }
+
     #[test]
     fn test_match_or_not_simple() {
         let matcher = SkimMatcherV2::default();
         assert_eq!(
-            matcher
-                .simple_match("axbycz", "xyz", false, true)
+            simple_match(&matcher, "axbycz", "xyz", false, true)
                 .unwrap()
                 .1,
             vec![1, 3, 5]
         );
 
         assert_eq!(
-            matcher.simple_match("", "", false, false),
+            simple_match(&matcher, "", "", false, false),
             Some((0, vec![]))
         );
         assert_eq!(
-            matcher.simple_match("abcdefaghi", "", false, false),
+            simple_match(&matcher, "abcdefaghi", "", false, false),
             Some((0, vec![]))
         );
-        assert_eq!(matcher.simple_match("", "a", false, false), None);
-        assert_eq!(matcher.simple_match("abcdefaghi", "中", false, false), None);
-        assert_eq!(matcher.simple_match("abc", "abx", false, false), None);
+        assert_eq!(simple_match(&matcher, "", "a", false, false), None);
         assert_eq!(
-            matcher
-                .simple_match("axbycz", "abc", false, true)
+            simple_match(&matcher, "abcdefaghi", "中", false, false),
+            None
+        );
+        assert_eq!(simple_match(&matcher, "abc", "abx", false, false), None);
+        assert_eq!(
+            simple_match(&matcher, "axbycz", "abc", false, true)
                 .unwrap()
                 .1,
             vec![0, 2, 4]
         );
         assert_eq!(
-            matcher
-                .simple_match("axbycz", "xyz", false, true)
+            simple_match(&matcher, "axbycz", "xyz", false, true)
                 .unwrap()
                 .1,
             vec![1, 3, 5]
         );
         assert_eq!(
-            matcher
-                .simple_match("Hello, 世界", "H世", false, true)
+            simple_match(&matcher, "Hello, 世界", "H世", false, true)
                 .unwrap()
                 .1,
             vec![0, 7]
