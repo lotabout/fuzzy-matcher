@@ -696,9 +696,9 @@ impl SkimMatcherV2 {
             let row_prev = self.adjust_row_idx(i, compressed);
             let to_skip = first_match_indices[i];
 
-            for (j, &c_ch) in choice.iter().enumerate().skip(to_skip) {
-                let col = j + 1;
-                let col_prev = j;
+            for (j, &c_ch) in choice[to_skip..].iter().enumerate() {
+                let col = to_skip + j + 1;
+                let col_prev = to_skip + j;
                 let idx_cur = m.get_index(row, col);
                 let idx_last = m.get_index(row, col_prev);
                 let idx_prev = m.get_index(row_prev, col_prev);
