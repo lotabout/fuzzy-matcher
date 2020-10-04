@@ -882,11 +882,13 @@ impl SkimMatcherV2 {
             compressed,
             case_sensitive,
         );
+        let first_col_of_last_row = first_match_indices[first_match_indices.len() - 1];
         let last_row = m.get_row(self.adjust_row_idx(num_char_pattern, compressed));
-        let (pat_idx, &MatrixCell { m_score, .. }) = last_row
+        let (pat_idx, &MatrixCell { m_score, .. }) = last_row[first_col_of_last_row..]
             .iter()
             .enumerate()
             .max_by_key(|&(_, x)| x.m_score)
+            .map(|(idx, cell)| (idx + first_col_of_last_row, cell))
             .expect("fuzzy_matcher failed to iterate over last_row");
 
         let mut positions = if with_pos {
@@ -899,7 +901,8 @@ impl SkimMatcherV2 {
             let mut j = pat_idx;
             let mut track_m = true;
             let mut current_move = Match;
-            while i > 0 && j > 0 {
+            let first_col_first_row = first_match_indices[0];
+            while i > 0 && j > first_col_first_row {
                 if current_move == Match {
                     positions.push((j - 1) as IndexType);
                 }
@@ -1267,5 +1270,17 @@ mod tests {
         assert_order(&matcher, "print", &["printf", "sprintf"]);
         assert_order(&matcher, "ast", &["ast", "AST", "INT_FAST16_MAX"]);
         assert_order(&matcher, "int", &["int", "INT", "PRINT"]);
+    }
+    
+    #[test]
+    fn test_reuse_should_not_affect_indices() {
+        let matcher = SkimMatcherV2::default();
+        let pattern = "139";
+        for num in 0..10000 {
+            let choice = num.to_string();
+            if let Some((_score, indices)) = matcher.fuzzy_indices(&choice, pattern) {
+                assert_eq!(indices.len(), 3);
+            }
+        }
     }
 }
