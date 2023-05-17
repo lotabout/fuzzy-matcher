@@ -90,7 +90,7 @@ pub fn char_role(prev: char, cur: char) -> CharRole {
 }
 
 #[allow(dead_code)]
-pub fn assert_order<'a>(matcher: &dyn FuzzyMatcher, pattern: &str, choices: &[&'a str]) {
+pub fn assert_order<'a>(matcher: &dyn FuzzyMatcher, pattern: &'a str, choices: &[&'a str]) {
     let result = filter_and_sort(matcher, pattern, choices);
 
     if result != choices {
@@ -111,7 +111,7 @@ pub fn assert_order<'a>(matcher: &dyn FuzzyMatcher, pattern: &str, choices: &[&'
 #[allow(dead_code)]
 pub fn filter_and_sort<'a>(
     matcher: &dyn FuzzyMatcher,
-    pattern: &str,
+    pattern: &'a str,
     lines: &[&'a str],
 ) -> Vec<&'a str> {
     let mut lines_with_score: Vec<(ScoreType, &'a str)> = lines
