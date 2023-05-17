@@ -1,5 +1,5 @@
 [package]
-name = "fuzzy-matcher"
+name = "fuzzy-muff"
 version = "0.3.8"
 authors = ["Jinzhou Zhang <lotabout@gmail.com>"]
 description = "Fuzzy Matching Library"
@@ -10,6 +10,10 @@ readme  = "README.md"
 keywords = ["fuzzy", "match", "text", "search"]
 license = "MIT"
 edition = "2018"
+
+[lib]
+name = "fuzzy-matcher"
+path = "src/lib.rs"
 
 [features]
 default = []
