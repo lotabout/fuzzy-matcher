@@ -24,7 +24,7 @@ use crate::util::*;
 use crate::{FuzzyMatcher, IndexType, ScoreType};
 use std::cell::RefCell;
 use std::cmp::max;
-use thread_local::CachedThreadLocal;
+use thread_local::ThreadLocal;
 
 #[derive(Eq, PartialEq, Debug, Copy, Clone)]
 enum CaseMatching {
@@ -38,8 +38,8 @@ pub struct ClangdMatcher {
 
     use_cache: bool,
 
-    c_cache: CachedThreadLocal<RefCell<Vec<char>>>, // vector to store the characters of choice
-    p_cache: CachedThreadLocal<RefCell<Vec<char>>>, // vector to store the characters of pattern
+    c_cache: ThreadLocal<RefCell<Vec<char>>>, // vector to store the characters of choice
+    p_cache: ThreadLocal<RefCell<Vec<char>>>, // vector to store the characters of pattern
 }
 
 impl Default for ClangdMatcher {
@@ -47,8 +47,8 @@ impl Default for ClangdMatcher {
         Self {
             case: CaseMatching::Ignore,
             use_cache: true,
-            c_cache: CachedThreadLocal::new(),
-            p_cache: CachedThreadLocal::new(),
+            c_cache: ThreadLocal::new(),
+            p_cache: ThreadLocal::new(),
         }
     }
 }
