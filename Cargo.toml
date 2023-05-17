@@ -20,4 +20,4 @@ compact = []
 thread_local = "1.1.7"
 
 [dev-dependencies]
-termion = "1.5.1"
+termion = "2.0.1"
