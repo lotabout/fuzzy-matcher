@@ -11,10 +11,6 @@ keywords = ["fuzzy", "match", "text", "search"]
 license = "MIT"
 edition = "2018"
 
-[lib]
-name = "fuzzy-matcher"
-path = "src/lib.rs"
-
 [features]
 default = []
 compact = []
