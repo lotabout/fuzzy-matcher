@@ -929,9 +929,9 @@ impl SkimMatcherV2 {
 
         if !self.use_cache {
             // drop the allocated memory
-            self.m_cache.get().map(|cell| cell.replace(vec![]));
-            self.c_cache.get().map(|cell| cell.replace(vec![]));
-            self.p_cache.get().map(|cell| cell.replace(vec![]));
+            self.m_cache.get().map(|cell| cell.take());
+            self.c_cache.get().map(|cell| cell.take());
+            self.p_cache.get().map(|cell| cell.take());
         }
 
         Some((m_score as ScoreType, positions))

@@ -156,8 +156,8 @@ impl FuzzyMatcher for ClangdMatcher {
 
         if !self.use_cache {
             // drop the allocated memory
-            self.c_cache.get().map(|cell| cell.replace(vec![]));
-            self.p_cache.get().map(|cell| cell.replace(vec![]));
+            self.c_cache.get().map(|cell| cell.take());
+            self.p_cache.get().map(|cell| cell.take());
         }
 
         indices_reverse.reverse();
@@ -200,8 +200,8 @@ impl FuzzyMatcher for ClangdMatcher {
 
         if !self.use_cache {
             // drop the allocated memory
-            self.c_cache.get().map(|cell| cell.replace(vec![]));
-            self.p_cache.get().map(|cell| cell.replace(vec![]));
+            self.c_cache.get().map(|cell| cell.take());
+            self.p_cache.get().map(|cell| cell.take());
         }
 
         Some(adjust_score(score, num_choice_chars))
