@@ -848,14 +848,10 @@ impl SkimMatcherV2 {
             .borrow_mut();
 
         choice_chars.clear();
-        for char in choice.chars() {
-            choice_chars.push(char);
-        }
+        choice_chars.extend(choice.chars());
 
         pattern_chars.clear();
-        for char in pattern.chars() {
-            pattern_chars.push(char);
-        }
+        pattern_chars.extend(pattern.chars());
 
         let first_match_indices = cheap_matches(&choice_chars, &pattern_chars, case_sensitive)?;
 

@@ -5,25 +5,23 @@ pub fn cheap_matches(
     pattern: &[char],
     case_sensitive: bool,
 ) -> Option<Vec<usize>> {
-    let mut first_match_indices = vec![];
-    let mut pattern_iter = pattern.iter().peekable();
-    for (idx, &c) in choice.iter().enumerate() {
-        match pattern_iter.peek() {
-            Some(&&p) => {
-                if char_equal(c, p, case_sensitive) {
-                    first_match_indices.push(idx);
-                    let _ = pattern_iter.next();
-                }
+    let first_match_indices: Vec<usize> = choice
+        .iter()
+        .enumerate()
+        .zip(pattern.iter())
+        .map_while(|((idx, c), p)| {
+            if char_equal(*c, *p, case_sensitive) {
+                return Some(idx)
             }
-            None => break,
-        }
-    }
+            
+            None
+        }).collect();
 
-    if pattern_iter.peek().is_none() {
-        Some(first_match_indices)
-    } else {
-        None
+    if !first_match_indices.is_empty() {
+        return Some(first_match_indices)
     }
+    
+    None    
 }
 
 /// Given 2 character, check if they are equal (considering ascii case)
@@ -90,28 +88,26 @@ pub fn char_role(prev: char, cur: char) -> CharRole {
 }
 
 #[allow(dead_code)]
-pub fn assert_order<'a>(matcher: &dyn FuzzyMatcher, pattern: &'a str, choices: &[&'a str]) {
+pub fn assert_order<'a>(matcher: &dyn FuzzyMatcher, pattern: &str, choices: &[&'a str]) {
     let result = filter_and_sort(matcher, pattern, choices);
 
-    if result != choices {
-        // debug print
-        println!("pattern: {}", pattern);
-        for &choice in choices.iter() {
-            if let Some((score, indices)) = matcher.fuzzy_indices(choice, pattern) {
-                println!("{}: {:?}", score, wrap_matches(choice, &indices));
-            } else {
-                println!("NO MATCH for {}", choice);
-            }
-        }
-    }
-
     assert_eq!(result, choices);
+
+    // debug print
+    println!("pattern: {}", pattern);
+    choices.iter().for_each(|choice| {
+        if let Some((score, indices)) = matcher.fuzzy_indices(choice, pattern) {
+            println!("{}: {:?}", score, wrap_matches(choice, &indices));
+        } else {
+            println!("NO MATCH for {}", choice);
+        }
+    });
 }
 
 #[allow(dead_code)]
 pub fn filter_and_sort<'a>(
     matcher: &dyn FuzzyMatcher,
-    pattern: &'a str,
+    pattern: &str,
     lines: &[&'a str],
 ) -> Vec<&'a str> {
     let mut lines_with_score: Vec<(ScoreType, &'a str)> = lines

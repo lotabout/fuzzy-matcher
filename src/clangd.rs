@@ -107,14 +107,10 @@ impl FuzzyMatcher for ClangdMatcher {
             .borrow_mut();
 
         choice_chars.clear();
-        for char in choice.chars() {
-            choice_chars.push(char);
-        }
+        choice_chars.extend(choice.chars());
 
         pattern_chars.clear();
-        for char in pattern.chars() {
-            pattern_chars.push(char);
-        }
+        pattern_chars.extend(pattern.chars());
 
         if cheap_matches(&choice_chars, &pattern_chars, case_sensitive).is_none() {
             return None;
@@ -177,14 +173,10 @@ impl FuzzyMatcher for ClangdMatcher {
             .borrow_mut();
 
         choice_chars.clear();
-        for char in choice.chars() {
-            choice_chars.push(char);
-        }
+        choice_chars.extend(choice.chars());
 
         pattern_chars.clear();
-        for char in pattern.chars() {
-            pattern_chars.push(char);
-        }
+        pattern_chars.extend(pattern.chars());
 
         if cheap_matches(&choice_chars, &pattern_chars, case_sensitive).is_none() {
             return None;
