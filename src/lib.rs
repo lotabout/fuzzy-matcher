@@ -2,15 +2,8 @@ pub mod clangd;
 pub mod skim;
 mod util;
 
-#[cfg(not(feature = "compact"))]
 type IndexType = usize;
-#[cfg(not(feature = "compact"))]
 type ScoreType = i64;
-
-#[cfg(feature = "compact")]
-type IndexType = u32;
-#[cfg(feature = "compact")]
-type ScoreType = i32;
 
 pub trait FuzzyMatcher: Send + Sync {
     /// fuzzy match choice with pattern, and return the score & matched indices of characters

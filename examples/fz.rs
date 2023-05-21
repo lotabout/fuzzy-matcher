@@ -6,10 +6,7 @@ use std::io::{self, BufRead};
 use std::process::exit;
 use termion::style::{Invert, Reset};
 
-#[cfg(not(feature = "compact"))]
 type IndexType = usize;
-#[cfg(feature = "compact")]
-type IndexType = u32;
 
 pub fn main() {
     let args: Vec<String> = env::args().collect();
@@ -27,23 +24,21 @@ pub fn main() {
         }
     }
 
-    if &pattern == "" {
+    if pattern.is_empty() {
         eprintln!("Usage: echo <piped_input> | fz --algo [skim|clangd] <pattern>");
         exit(1);
     }
 
     let matcher: Box<dyn FuzzyMatcher> = match algorithm {
-        Some("skim") | Some("skim_v2") => Box::new(SkimMatcherV2::default()),
-        Some("clangd") => Box::new(ClangdMatcher::default()),
+        Some("skim") | Some("skim_v2") => Box::<SkimMatcherV2>::default(),
+        Some("clangd") => Box::<ClangdMatcher>::default(),
         _ => panic!("Algorithm not supported: {:?}", algorithm),
     };
 
     let stdin = io::stdin();
-    for line in stdin.lock().lines() {
-        if let Ok(line) = line {
-            if let Some((score, indices)) = matcher.fuzzy_indices(&line, &pattern) {
-                println!("{:8}: {}", score, wrap_matches(&line, &indices));
-            }
+    for line in stdin.lock().lines().flatten() {
+        if let Some((score, indices)) = matcher.fuzzy_indices(&line, &pattern) {
+            println!("{:8}: {}", score, wrap_matches(&line, &indices));
         }
     }
 }

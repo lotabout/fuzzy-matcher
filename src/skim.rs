@@ -39,13 +39,8 @@ const PENALTY_MAX_LEADING: ScoreType = -18;
 const PENALTY_UNMATCHED: ScoreType = -2;
 
 #[deprecated(since = "0.3.5", note = "Please use SkimMatcherV2 instead")]
+#[derive(Default)]
 pub struct SkimMatcher {}
-
-impl Default for SkimMatcher {
-    fn default() -> Self {
-        Self {}
-    }
-}
 
 /// The V1 matcher is based on ForrestTheWoods's post
 /// https://www.forrestthewoods.com/blog/reverse_engineering_sublime_texts_fuzzy_match/
@@ -96,7 +91,7 @@ pub fn fuzzy_indices(choice: &str, pattern: &str) -> Option<(ScoreType, Vec<Inde
     let mut pat_idx = scores.len() as i64 - 1;
     while pat_idx >= 0 {
         let status = scores[pat_idx as usize][next_col];
-        next_col = status.back_ref as usize;
+        next_col = status.back_ref;
         picked.push(status.idx);
         pat_idx -= 1;
     }
@@ -160,7 +155,7 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
             // not matched
             return None;
         }
-        match_start_idx = vec[0].idx as usize + 1;
+        match_start_idx = vec[0].idx + 1;
         scores.push(vec);
         pat_prev_ch = pat_ch;
     }
@@ -204,7 +199,7 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
                     (back_ref, final_score, adj_num)
                 })
                 .max_by_key(|&(_, x, _)| x)
-                .unwrap_or((prev.back_ref as usize, score_before_idx, prev.adj_num));
+                .unwrap_or((prev.back_ref, score_before_idx, prev.adj_num));
 
             cur_row[idx] = if idx > 0 && score < score_before_idx {
                 MatchingStatus {
@@ -847,15 +842,9 @@ impl SkimMatcherV2 {
             .get_or(|| RefCell::new(Vec::new()))
             .borrow_mut();
 
-        choice_chars.clear();
-        for char in choice.chars() {
-            choice_chars.push(char);
-        }
+        *choice_chars = choice.chars().collect();
 
-        pattern_chars.clear();
-        for char in pattern.chars() {
-            pattern_chars.push(char);
-        }
+        *pattern_chars = pattern.chars().collect();
 
         let first_match_indices = cheap_matches(&choice_chars, &pattern_chars, case_sensitive)?;
 
@@ -945,9 +934,11 @@ impl SkimMatcherV2 {
         case_sensitive: bool,
         with_pos: bool,
     ) -> Option<(ScoreType, Vec<IndexType>)> {
-        if pattern.len() <= 0 {
+        if pattern.is_empty() {
             return Some((0, Vec::new()));
-        } else if pattern.len() == 1 {
+        }
+
+        if pattern.len() == 1 {
             let match_idx = first_match_indices[0];
             let prev_ch = if match_idx > 0 {
                 choice[match_idx - 1]
@@ -1271,7 +1262,7 @@ mod tests {
         assert_order(&matcher, "ast", &["ast", "AST", "INT_FAST16_MAX"]);
         assert_order(&matcher, "int", &["int", "INT", "PRINT"]);
     }
-    
+
     #[test]
     fn test_reuse_should_not_affect_indices() {
         let matcher = SkimMatcherV2::default();

@@ -106,19 +106,11 @@ impl FuzzyMatcher for ClangdMatcher {
             .get_or(|| RefCell::new(Vec::new()))
             .borrow_mut();
 
-        choice_chars.clear();
-        for char in choice.chars() {
-            choice_chars.push(char);
-        }
+        *choice_chars = choice.chars().collect();
 
-        pattern_chars.clear();
-        for char in pattern.chars() {
-            pattern_chars.push(char);
-        }
+        *pattern_chars = pattern.chars().collect();
 
-        if cheap_matches(&choice_chars, &pattern_chars, case_sensitive).is_none() {
-            return None;
-        }
+        cheap_matches(&choice_chars, &pattern_chars, case_sensitive)?;
 
         let num_pattern_chars = pattern_chars.len();
         let num_choice_chars = choice_chars.len();
@@ -176,19 +168,11 @@ impl FuzzyMatcher for ClangdMatcher {
             .get_or(|| RefCell::new(Vec::new()))
             .borrow_mut();
 
-        choice_chars.clear();
-        for char in choice.chars() {
-            choice_chars.push(char);
-        }
+        *choice_chars = choice.chars().collect();
 
-        pattern_chars.clear();
-        for char in pattern.chars() {
-            pattern_chars.push(char);
-        }
+        *pattern_chars = pattern.chars().collect();
 
-        if cheap_matches(&choice_chars, &pattern_chars, case_sensitive).is_none() {
-            return None;
-        }
+        cheap_matches(&choice_chars, &pattern_chars, case_sensitive)?;
 
         let num_pattern_chars = pattern_chars.len();
         let num_choice_chars = choice_chars.len();
