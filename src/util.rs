@@ -5,27 +5,32 @@ pub fn cheap_matches(
     pattern: &[char],
     case_sensitive: bool,
 ) -> Option<Vec<usize>> {
-    let first_match_indices: Vec<usize> = pattern
-        .iter()
-        .map_while(|p_char| {
-            choice
-                .iter()
-                .rposition(|c_char| char_equal(c_char, p_char, case_sensitive))
-        })
-        .collect();
-
-    if !first_match_indices.is_empty() {
-        return Some(first_match_indices);
+    let mut first_match_indices = vec![];
+    let mut pattern_iter = pattern.iter().peekable();
+    for (idx, &c) in choice.iter().enumerate() {
+        match pattern_iter.peek() {
+            Some(&&p) => {
+                if char_equal(c, p, case_sensitive) {
+                    first_match_indices.push(idx);
+                    let _ = pattern_iter.next();
+                }
+            }
+            None => break,
+        }
     }
 
-    None
+    if pattern_iter.peek().is_none() {
+        Some(first_match_indices)
+    } else {
+        None
+    }
 }
 
 /// Given 2 character, check if they are equal (considering ascii case)
 /// e.g. ('a', 'A', true) => false
 /// e.g. ('a', 'A', false) => true
 #[inline]
-pub fn char_equal(a: &char, b: &char, case_sensitive: bool) -> bool {
+pub fn char_equal(a: char, b: char, case_sensitive: bool) -> bool {
     if case_sensitive {
         a == b
     } else {

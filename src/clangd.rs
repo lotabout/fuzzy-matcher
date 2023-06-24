@@ -372,7 +372,7 @@ fn skip_penalty(_ch_idx: usize, ch: char, last_action: Action) -> ScoreType {
 }
 
 fn allow_match(pat_ch: char, line_ch: char, case_sensitive: bool) -> bool {
-    char_equal(&pat_ch, &line_ch, case_sensitive)
+    char_equal(pat_ch, line_ch, case_sensitive)
 }
 
 fn match_bonus(

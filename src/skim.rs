@@ -775,7 +775,7 @@ impl SkimMatcherV2 {
     /// Calculate the matching score of the characters
     /// return None if not matched.
     fn calculate_match_score(&self, c: char, p: char, case_sensitive: bool) -> Option<u16> {
-        if !char_equal(&c, &p, case_sensitive) {
+        if !char_equal(c, p, case_sensitive) {
             return None;
         }
 
@@ -958,7 +958,7 @@ impl SkimMatcherV2 {
         for (idx, &c) in choice[start_idx..=end_idx].iter().enumerate().rev() {
             match pattern_iter.peek() {
                 Some(&&p) => {
-                    if char_equal(&c, &p, case_sensitive) {
+                    if char_equal(c, p, case_sensitive) {
                         let _ = pattern_iter.next();
                         start_idx = idx;
                     }
