@@ -5,32 +5,31 @@ pub fn cheap_matches(
     pattern: &[char],
     case_sensitive: bool,
 ) -> Option<Vec<usize>> {
-    let mut first_match_indices = vec![];
-    let mut pattern_iter = pattern.iter().peekable();
-    for (idx, &c) in choice.iter().enumerate() {
-        match pattern_iter.peek() {
-            Some(&&p) => {
-                if char_equal(c, p, case_sensitive) {
-                    first_match_indices.push(idx);
-                    let _ = pattern_iter.next();
-                }
-            }
-            None => break,
-        }
-    }
+    pattern
+        .first()
+        .and_then(|p_char| {
+            choice
+                .iter()
+                .rposition(|c_char| char_equal(c_char, p_char, case_sensitive))
+        })
+        .and_then(|first_match_position| {
+            let res = choice[first_match_position..]
+                .iter()
+                .zip(pattern)
+                .enumerate()
+                .take_while(|(_idx, (c_char, p_char))| char_equal(c_char, p_char, case_sensitive))
+                .map(|(idx, (_c_char, _p_char))| idx)
+                .collect();
 
-    if pattern_iter.peek().is_none() {
-        Some(first_match_indices)
-    } else {
-        None
-    }
+            Some(res)
+        })
 }
 
 /// Given 2 character, check if they are equal (considering ascii case)
 /// e.g. ('a', 'A', true) => false
 /// e.g. ('a', 'A', false) => true
 #[inline]
-pub fn char_equal(a: char, b: char, case_sensitive: bool) -> bool {
+pub fn char_equal(a: &char, b: &char, case_sensitive: bool) -> bool {
     if case_sensitive {
         a == b
     } else {

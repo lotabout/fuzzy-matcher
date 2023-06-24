@@ -272,7 +272,7 @@ fn build_graph(
             // what if we want to match current line character?
             // so we need to calculate the cases where the pre pattern character is matched/missed
             let pre_match = &dp[prev_row_idx][line_idx];
-            let match_match_score = if allow_match(pat_ch, line_ch, case_sensitive) {
+            let match_match_score = if allow_match(&pat_ch, &line_ch, case_sensitive) {
                 pre_match.match_score
                     + match_bonus(
                         pat_idx,
@@ -287,7 +287,7 @@ fn build_graph(
                 AWFUL_SCORE
             };
 
-            let miss_match_score = if allow_match(pat_ch, line_ch, case_sensitive) {
+            let miss_match_score = if allow_match(&pat_ch, &line_ch, case_sensitive) {
                 pre_match.miss_score
                     + match_bonus(
                         pat_idx,
@@ -371,7 +371,7 @@ fn skip_penalty(_ch_idx: usize, ch: char, last_action: Action) -> ScoreType {
     score
 }
 
-fn allow_match(pat_ch: char, line_ch: char, case_sensitive: bool) -> bool {
+fn allow_match(pat_ch: &char, line_ch: &char, case_sensitive: bool) -> bool {
     char_equal(pat_ch, line_ch, case_sensitive)
 }
 

@@ -701,7 +701,7 @@ impl SkimMatcherV2 {
                 // update M matrix
                 // M[i][j] = match(i, j) + max(M[i-1][j-1], P[i-1][j-1])
                 if let Some(cur_match_score) =
-                    self.calculate_match_score(c_ch, p_ch, case_sensitive)
+                    self.calculate_match_score(&c_ch, &p_ch, case_sensitive)
                 {
                     let prev_match_score = m.matrix[idx_prev].m_score;
                     let prev_skip_score = m.matrix[idx_prev].p_score;
@@ -774,7 +774,7 @@ impl SkimMatcherV2 {
 
     /// Calculate the matching score of the characters
     /// return None if not matched.
-    fn calculate_match_score(&self, c: char, p: char, case_sensitive: bool) -> Option<u16> {
+    fn calculate_match_score(&self, c: &char, p: &char, case_sensitive: bool) -> Option<u16> {
         if !char_equal(c, p, case_sensitive) {
             return None;
         }
@@ -955,9 +955,9 @@ impl SkimMatcherV2 {
         let end_idx = first_match_indices[first_match_indices.len() - 1];
 
         let mut pattern_iter = pattern.iter().rev().peekable();
-        for (idx, &c) in choice[start_idx..=end_idx].iter().enumerate().rev() {
+        for (idx, c) in choice[start_idx..=end_idx].iter().enumerate().rev() {
             match pattern_iter.peek() {
-                Some(&&p) => {
+                Some(p) => {
                     if char_equal(c, p, case_sensitive) {
                         let _ = pattern_iter.next();
                         start_idx = idx;
@@ -1011,7 +1011,7 @@ impl SkimMatcherV2 {
 
             let (_p_idx, &p) = *op.unwrap();
 
-            if let Some(match_score) = self.calculate_match_score(c, p, case_sensitive) {
+            if let Some(match_score) = self.calculate_match_score(&c, &p, case_sensitive) {
                 if with_pos {
                     pos.push((c_idx + start_idx) as IndexType);
                 }
