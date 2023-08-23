@@ -33,6 +33,7 @@ enum CaseMatching {
     Smart,
 }
 
+#[derive(Debug)]
 pub struct ClangdMatcher {
     case: CaseMatching,
 
