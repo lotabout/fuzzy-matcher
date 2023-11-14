@@ -947,7 +947,7 @@ impl SkimMatcherV2 {
         case_sensitive: bool,
         with_pos: bool,
     ) -> Option<(ScoreType, Vec<IndexType>)> {
-        if pattern.len() <= 0 {
+        if pattern.is_empty() {
             return Some((0, Vec::new()));
         } else if pattern.len() == 1 {
             let match_idx = first_match_indices[0];
