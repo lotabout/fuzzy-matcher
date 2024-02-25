@@ -6,7 +6,7 @@ description = "Fuzzy Matching Library"
 documentation = "https://docs.rs/fuzzy-matcher"
 homepage = "https://github.com/lotabout/fuzzy-matcher"
 repository = "https://github.com/lotabout/fuzzy-matcher"
-readme = "README.md"
+readme  = "README.md"
 keywords = ["fuzzy", "match", "text", "search"]
 license = "MIT"
 edition = "2018"
@@ -19,5 +19,8 @@ path = "src/lib.rs"
 default = []
 compact = []
 
+[dependencies]
+thread_local = "1.1.7"
+
 [dev-dependencies]
-termion = "3.0.0"
+termion = "2.0.1"

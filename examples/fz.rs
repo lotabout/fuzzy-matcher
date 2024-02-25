@@ -46,7 +46,7 @@ pub fn main() {
 fn wrap_matches(line: &str, indices: &[IndexType]) -> String {
     let mut ret = String::new();
     let mut peekable = indices.iter().peekable();
-    for (idx, ch) in line.char_indices() {
+    for (idx, ch) in line.chars().enumerate() {
         let next_id = **peekable.peek().unwrap_or(&&(line.len() as IndexType));
         if next_id == (idx as IndexType) {
             ret.push_str(format!("{}{}{}", Invert, ch, Reset).as_str());

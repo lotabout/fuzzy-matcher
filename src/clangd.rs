@@ -22,7 +22,9 @@
 ///! Also check: https://github.com/lewang/flx/issues/98
 use crate::util::*;
 use crate::{FuzzyMatcher, IndexType, ScoreType};
+use std::cell::RefCell;
 use std::cmp::max;
+use thread_local::ThreadLocal;
 
 #[derive(Eq, PartialEq, Debug, Copy, Clone)]
 enum CaseMatching {
@@ -33,12 +35,20 @@ enum CaseMatching {
 
 pub struct ClangdMatcher {
     case: CaseMatching,
+
+    use_cache: bool,
+
+    c_cache: ThreadLocal<RefCell<Vec<char>>>, // vector to store the characters of choice
+    p_cache: ThreadLocal<RefCell<Vec<char>>>, // vector to store the characters of pattern
 }
 
 impl Default for ClangdMatcher {
     fn default() -> Self {
         Self {
             case: CaseMatching::Ignore,
+            use_cache: true,
+            c_cache: ThreadLocal::new(),
+            p_cache: ThreadLocal::new(),
         }
     }
 }
@@ -56,6 +66,11 @@ impl ClangdMatcher {
 
     pub fn respect_case(mut self) -> Self {
         self.case = CaseMatching::Respect;
+        self
+    }
+
+    pub fn use_cache(mut self, use_cache: bool) -> Self {
+        self.use_cache = use_cache;
         self
     }
 
@@ -82,12 +97,25 @@ impl FuzzyMatcher for ClangdMatcher {
     fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
         let case_sensitive = self.is_case_sensitive(pattern);
 
-        cheap_matches(&choice, &pattern, case_sensitive)?;
+        let mut choice_chars = self
+            .c_cache
+            .get_or(|| RefCell::new(Vec::new()))
+            .borrow_mut();
+        let mut pattern_chars = self
+            .p_cache
+            .get_or(|| RefCell::new(Vec::new()))
+            .borrow_mut();
 
-        let num_pattern_chars = pattern.len();
-        let num_choice_chars = choice.len();
+        *choice_chars = choice.chars().collect();
 
-        let dp = build_graph(&choice, &pattern, false, case_sensitive);
+        *pattern_chars = pattern.chars().collect();
+
+        cheap_matches(&choice_chars, &pattern_chars, case_sensitive)?;
+
+        let num_pattern_chars = pattern_chars.len();
+        let num_choice_chars = choice_chars.len();
+
+        let dp = build_graph(&choice_chars, &pattern_chars, false, case_sensitive);
 
         // search backwards for the matched indices
         let mut indices_reverse = Vec::with_capacity(num_pattern_chars);
@@ -118,6 +146,12 @@ impl FuzzyMatcher for ClangdMatcher {
             }
         }
 
+        if !self.use_cache {
+            // drop the allocated memory
+            self.c_cache.get().map(|cell| cell.take());
+            self.p_cache.get().map(|cell| cell.take());
+        }
+
         indices_reverse.reverse();
         Some((adjust_score(score, num_choice_chars), indices_reverse))
     }
@@ -125,15 +159,34 @@ impl FuzzyMatcher for ClangdMatcher {
     fn fuzzy_match(&self, choice: &str, pattern: &str) -> Option<ScoreType> {
         let case_sensitive = self.is_case_sensitive(pattern);
 
-        cheap_matches(&choice, &pattern, case_sensitive)?;
+        let mut choice_chars = self
+            .c_cache
+            .get_or(|| RefCell::new(Vec::new()))
+            .borrow_mut();
+        let mut pattern_chars = self
+            .p_cache
+            .get_or(|| RefCell::new(Vec::new()))
+            .borrow_mut();
 
-        let num_pattern_chars = pattern.len();
-        let num_choice_chars = choice.len();
+        *choice_chars = choice.chars().collect();
 
-        let dp = build_graph(&choice, &pattern, true, case_sensitive);
+        *pattern_chars = pattern.chars().collect();
+
+        cheap_matches(&choice_chars, &pattern_chars, case_sensitive)?;
+
+        let num_pattern_chars = pattern_chars.len();
+        let num_choice_chars = choice_chars.len();
+
+        let dp = build_graph(&choice_chars, &pattern_chars, true, case_sensitive);
 
         let cell = dp[num_pattern_chars & 1][num_choice_chars];
         let score = max(cell.match_score, cell.miss_score);
+
+        if !self.use_cache {
+            // drop the allocated memory
+            self.c_cache.get().map(|cell| cell.take());
+            self.p_cache.get().map(|cell| cell.take());
+        }
 
         Some(adjust_score(score, num_choice_chars))
     }
@@ -156,8 +209,8 @@ pub fn fuzzy_match(line: &str, pattern: &str) -> Option<ScoreType> {
 // checkout https://github.com/llvm-mirror/clang-tools-extra/blob/master/clangd/FuzzyMatch.cpp
 // for the description
 fn build_graph(
-    line: &str,
-    pattern: &str,
+    line: &[char],
+    pattern: &[char],
     compressed: bool,
     case_sensitive: bool,
 ) -> Vec<Vec<Score>> {
@@ -174,7 +227,7 @@ fn build_graph(
     dp[0][0].miss_score = 0;
 
     // first line
-    for (idx, ch) in line.char_indices() {
+    for (idx, &ch) in line.iter().enumerate() {
         dp[0][idx + 1] = Score {
             miss_score: dp[0][idx].miss_score - skip_penalty(idx, ch, Action::Miss),
             last_action_miss: Action::Miss,
@@ -185,7 +238,7 @@ fn build_graph(
 
     // build the matrix
     let mut pat_prev_ch = '\0';
-    for (pat_idx, pat_ch) in pattern.char_indices() {
+    for (pat_idx, &pat_ch) in pattern.iter().enumerate() {
         let current_row_idx = if compressed {
             (pat_idx + 1) & 1
         } else {
@@ -194,7 +247,7 @@ fn build_graph(
         let prev_row_idx = if compressed { pat_idx & 1 } else { pat_idx };
 
         let mut line_prev_ch = '\0';
-        for (line_idx, line_ch) in line.char_indices() {
+        for (line_idx, &line_ch) in line.iter().enumerate() {
             if line_idx < pat_idx {
                 line_prev_ch = line_ch;
                 continue;
@@ -443,7 +496,7 @@ fn print_dp(line: &str, pattern: &str, dp: &[Vec<Score>]) {
     let num_pattern_chars = pattern.chars().count();
 
     print!("\t");
-    for (idx, ch) in line.char_indices() {
+    for (idx, ch) in line.chars().enumerate() {
         print!("\t\t{}/{}", idx + 1, ch);
     }
 

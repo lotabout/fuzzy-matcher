@@ -1,11 +1,15 @@
 use crate::{FuzzyMatcher, IndexType, ScoreType};
 
-pub fn cheap_matches(choice: &str, pattern: &str, case_sensitive: bool) -> Option<Vec<usize>> {
+pub fn cheap_matches(
+    choice: &[char],
+    pattern: &[char],
+    case_sensitive: bool,
+) -> Option<Vec<usize>> {
     let mut first_match_indices = vec![];
-    let mut pattern_iter = pattern.chars().peekable();
-    for (idx, c) in choice.char_indices() {
+    let mut pattern_iter = pattern.iter().peekable();
+    for (idx, &c) in choice.iter().enumerate() {
         match pattern_iter.peek() {
-            Some(&p) => {
+            Some(&&p) => {
                 if char_equal(c, p, case_sensitive) {
                     first_match_indices.push(idx);
                     let _ = pattern_iter.next();
@@ -125,7 +129,7 @@ pub fn filter_and_sort<'a>(
 pub fn wrap_matches(line: &str, indices: &[IndexType]) -> String {
     let mut ret = String::new();
     let mut peekable = indices.iter().peekable();
-    for (idx, ch) in line.char_indices() {
+    for (idx, ch) in line.chars().enumerate() {
         let next_id = **peekable.peek().unwrap_or(&&(line.len() as IndexType));
         if next_id == (idx as IndexType) {
             ret.push_str(format!("[{}]", ch).as_str());
