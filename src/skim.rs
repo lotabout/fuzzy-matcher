@@ -1,10 +1,7 @@
 #![allow(deprecated)]
 
-use std::cell::RefCell;
 use std::cmp::max;
 use std::fmt::Formatter;
-
-use thread_local::CachedThreadLocal;
 
 use crate::skim::Movement::{Match, Skip};
 use crate::util::{char_equal, cheap_matches};
@@ -127,10 +124,10 @@ fn build_graph(choice: &str, pattern: &str) -> Option<Vec<Vec<MatchingStatus>>> 
     let mut pat_prev_ch = '\0';
 
     // initialize the match positions and inline scores
-    for (pat_idx, pat_ch) in pattern.chars().enumerate() {
+    for (pat_idx, pat_ch) in pattern.char_indices() {
         let mut vec = vec![];
         let mut choice_prev_ch = '\0';
-        for (idx, ch) in choice.chars().enumerate() {
+        for (idx, ch) in choice.char_indices() {
             if ch.to_ascii_lowercase() == pat_ch.to_ascii_lowercase() && idx >= match_start_idx {
                 let score = fuzzy_score(
                     ch,
@@ -600,11 +597,6 @@ pub struct SkimMatcherV2 {
     score_config: SkimScoreConfig,
     element_limit: usize,
     case: CaseMatching,
-    use_cache: bool,
-
-    m_cache: CachedThreadLocal<RefCell<Vec<MatrixCell>>>,
-    c_cache: CachedThreadLocal<RefCell<Vec<char>>>, // vector to store the characters of choice
-    p_cache: CachedThreadLocal<RefCell<Vec<char>>>, // vector to store the characters of pattern
 }
 
 impl Default for SkimMatcherV2 {
@@ -614,11 +606,6 @@ impl Default for SkimMatcherV2 {
             score_config: SkimScoreConfig::default(),
             element_limit: 0,
             case: CaseMatching::Smart,
-            use_cache: true,
-
-            m_cache: CachedThreadLocal::new(),
-            c_cache: CachedThreadLocal::new(),
-            p_cache: CachedThreadLocal::new(),
         }
     }
 }
@@ -649,11 +636,6 @@ impl SkimMatcherV2 {
         self
     }
 
-    pub fn use_cache(mut self, use_cache: bool) -> Self {
-        self.use_cache = use_cache;
-        self
-    }
-
     pub fn debug(mut self, debug: bool) -> Self {
         self.debug = debug;
         self
@@ -663,8 +645,8 @@ impl SkimMatcherV2 {
     fn build_score_matrix(
         &self,
         m: &mut ScoreMatrix,
-        choice: &[char],
-        pattern: &[char],
+        choice: &str,
+        pattern: &str,
         first_match_indices: &[usize],
         compressed: bool,
         case_sensitive: bool,
@@ -686,12 +668,12 @@ impl SkimMatcherV2 {
         }
 
         // update the matrix;
-        for (i, &p_ch) in pattern.iter().enumerate() {
+        for (i, p_ch) in pattern.char_indices() {
             let row = self.adjust_row_idx(i + 1, compressed);
             let row_prev = self.adjust_row_idx(i, compressed);
             let to_skip = first_match_indices[i];
 
-            for (j, &c_ch) in choice[to_skip..].iter().enumerate() {
+            for (j, c_ch) in choice[to_skip..].char_indices() {
                 let col = to_skip + j + 1;
                 let col_prev = to_skip + j;
                 let idx_cur = m.get_index(row, col);
@@ -748,9 +730,9 @@ impl SkimMatcherV2 {
     }
 
     /// check bonus for start of camel case, etc.
-    fn build_in_place_bonus(&self, choice: &[char], b: &mut [i32]) {
+    fn build_in_place_bonus(&self, choice: &str, b: &mut [i32]) {
         let mut prev_ch = '\0';
-        for (j, &c_ch) in choice.iter().enumerate() {
+        for (j, c_ch) in choice.char_indices() {
             let prev_ch_type = CharType::of(prev_ch);
             let ch_type = CharType::of(c_ch);
             b[j + 1] = self.in_place_bonus(prev_ch_type, ch_type);
@@ -829,33 +811,18 @@ impl SkimMatcherV2 {
         let compressed = !with_pos;
 
         // initialize the score matrix
-        let mut m = self
-            .m_cache
-            .get_or(|| RefCell::new(Vec::new()))
-            .borrow_mut();
-        let mut choice_chars = self
-            .c_cache
-            .get_or(|| RefCell::new(Vec::new()))
-            .borrow_mut();
-        let mut pattern_chars = self
-            .p_cache
-            .get_or(|| RefCell::new(Vec::new()))
-            .borrow_mut();
+        let mut m = Vec::new();
 
-        *choice_chars = choice.chars().collect();
+        let first_match_indices = cheap_matches(&choice, &pattern, case_sensitive)?;
 
-        *pattern_chars = pattern.chars().collect();
-
-        let first_match_indices = cheap_matches(&choice_chars, &pattern_chars, case_sensitive)?;
-
-        let cols = choice_chars.len() + 1;
-        let num_char_pattern = pattern_chars.len();
+        let cols = choice.len() + 1;
+        let num_char_pattern = pattern.len();
         let rows = if compressed { 2 } else { num_char_pattern + 1 };
 
         if self.element_limit > 0 && self.element_limit < rows * cols {
             return self.simple_match(
-                &choice_chars,
-                &pattern_chars,
+                &choice,
+                &pattern,
                 &first_match_indices,
                 case_sensitive,
                 with_pos,
@@ -865,8 +832,8 @@ impl SkimMatcherV2 {
         let mut m = ScoreMatrix::new(&mut m, rows, cols);
         self.build_score_matrix(
             &mut m,
-            &choice_chars,
-            &pattern_chars,
+            &choice,
+            &pattern,
             &first_match_indices,
             compressed,
             case_sensitive,
@@ -916,20 +883,13 @@ impl SkimMatcherV2 {
             println!("Matrix:\n{:?}", m);
         }
 
-        if !self.use_cache {
-            // drop the allocated memory
-            self.m_cache.get().map(|cell| cell.take());
-            self.c_cache.get().map(|cell| cell.take());
-            self.p_cache.get().map(|cell| cell.take());
-        }
-
         Some((m_score as ScoreType, positions))
     }
 
     pub fn simple_match(
         &self,
-        choice: &[char],
-        pattern: &[char],
+        choice: &str,
+        pattern: &str,
         first_match_indices: &[usize],
         case_sensitive: bool,
         with_pos: bool,
@@ -941,12 +901,12 @@ impl SkimMatcherV2 {
         if pattern.len() == 1 {
             let match_idx = first_match_indices[0];
             let prev_ch = if match_idx > 0 {
-                choice[match_idx - 1]
+                choice.chars().nth(match_idx - 1).unwrap()
             } else {
                 '\0'
             };
             let prev_ch_type = CharType::of(prev_ch);
-            let ch_type = CharType::of(choice[match_idx]);
+            let ch_type = CharType::of(choice.chars().nth(match_idx).unwrap());
             let in_place_bonus = self.in_place_bonus(prev_ch_type, ch_type);
             return Some((in_place_bonus as ScoreType, vec![match_idx as IndexType]));
         }
@@ -954,10 +914,10 @@ impl SkimMatcherV2 {
         let mut start_idx = first_match_indices[0];
         let end_idx = first_match_indices[first_match_indices.len() - 1];
 
-        let mut pattern_iter = pattern.iter().rev().peekable();
-        for (idx, &c) in choice[start_idx..=end_idx].iter().enumerate().rev() {
+        let mut pattern_iter = pattern.chars().rev().peekable();
+        for (idx, c) in choice[start_idx..=end_idx].char_indices().rev() {
             match pattern_iter.peek() {
-                Some(&&p) => {
+                Some(&p) => {
                     if char_equal(c, p, case_sensitive) {
                         let _ = pattern_iter.next();
                         start_idx = idx;
@@ -979,8 +939,8 @@ impl SkimMatcherV2 {
 
     fn calculate_score_with_pos(
         &self,
-        choice: &[char],
-        pattern: &[char],
+        choice: &str,
+        pattern: &str,
         start_idx: usize,
         end_idx: usize,
         case_sensitive: bool,
@@ -988,8 +948,8 @@ impl SkimMatcherV2 {
     ) -> (ScoreType, Vec<IndexType>) {
         let mut pos = Vec::new();
 
-        let choice_iter = choice[start_idx..=end_idx].iter().enumerate();
-        let mut pattern_iter = pattern.iter().enumerate().peekable();
+        let choice_iter = choice[start_idx..=end_idx].char_indices();
+        let mut pattern_iter = pattern.char_indices().peekable();
 
         // unfortunately we could not get the the character before the first character's(for performance)
         // so we tread them as NonWord
@@ -999,7 +959,7 @@ impl SkimMatcherV2 {
         let mut in_gap = false;
         let mut prev_match_bonus = 0;
 
-        for (c_idx, &c) in choice_iter {
+        for (c_idx, c) in choice_iter {
             let op = pattern_iter.peek();
             if op.is_none() {
                 break;
@@ -1009,7 +969,7 @@ impl SkimMatcherV2 {
             let ch_type = CharType::of(c);
             let in_place_bonus = self.in_place_bonus(prev_ch_type, ch_type);
 
-            let (_p_idx, &p) = *op.unwrap();
+            let (_p_idx, p) = *op.unwrap();
 
             if let Some(match_score) = self.calculate_match_score(c, p, case_sensitive) {
                 if with_pos {
@@ -1136,8 +1096,6 @@ mod tests {
         case_sensitive: bool,
         with_pos: bool,
     ) -> Option<(ScoreType, Vec<IndexType>)> {
-        let choice: Vec<char> = choice.chars().collect();
-        let pattern: Vec<char> = pattern.chars().collect();
         let first_match_indices = cheap_matches(&choice, &pattern, case_sensitive)?;
         matcher.simple_match(
             &choice,
