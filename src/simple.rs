@@ -3,6 +3,8 @@ use crate::FuzzyMatcher;
 use crate::IndexType;
 use crate::ScoreType;
 
+const BASELINE: i64 = 100_000;
+
 impl FuzzyMatcher for SimpleMatcher {
     fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
         self.fuzzy(choice, pattern)
@@ -55,20 +57,28 @@ impl SimpleMatcher {
             return None;
         }
 
+        if pattern.len() > choice.len() {
+            return None;
+        }
+
         if pattern.len() == 0 {
             return Some((0, Vec::new()));
         }
 
-        let matches = Self::forward_matches(choice, pattern, case_sensitive)?;
+        let forward_matches = Self::forward_matches(choice, pattern, case_sensitive)?;
 
-        let mut start_idx = *matches.first()?;
-        let end_idx = *matches.last()?;
+        let mut start_idx = *forward_matches.first()?;
+        let end_idx = *forward_matches.last()?;
 
         Self::reverse_matches(choice, pattern, case_sensitive, &mut start_idx, end_idx);
 
         let score = Self::score(start_idx, end_idx, pattern, choice);
 
-        Some((score, matches))
+        if score >= BASELINE {
+            return Some((score, forward_matches));
+        }
+
+        None
     }
 
     pub fn score(start_idx: usize, end_idx: usize, pattern: &str, choice: &str) -> i64 {
@@ -78,25 +88,23 @@ impl SimpleMatcher {
         let choice_abs_diff = choice_len.abs_diff(pattern_len);
 
         let group_closeness = if idx_abs_diff == 0 {
-            100_000_000
-        } else if idx_abs_diff == 1 {
             10_000_000
+        } else if idx_abs_diff >= 4 {
+            0
         } else {
             1_000_000 / idx_abs_diff
         };
 
         let first_letter_bonus = if start_idx == 0 {
-            1_000_000
-        } else if start_idx == 1 {
             100_000
-        } else {
+        } else if idx_abs_diff <= 4 {
             10_000 / start_idx
+        } else {
+            0
         };
 
         let total_choice_diff_len = if choice_abs_diff == 0 {
             100_000
-        } else if choice_abs_diff == 1 {
-            10_000
         } else {
             10_000 / choice_abs_diff
         };
