@@ -64,7 +64,7 @@ impl SimpleMatcher {
         let mut start_idx = *matches.first()?;
         let end_idx = *matches.last()?;
 
-        Self::reverse_matches(choice, pattern, case_sensitive, &mut start_idx);
+        Self::reverse_matches(choice, pattern, case_sensitive, &mut start_idx, end_idx);
 
         let score = Self::score(start_idx, end_idx, pattern, choice);
 
@@ -72,24 +72,37 @@ impl SimpleMatcher {
     }
 
     pub fn score(start_idx: usize, end_idx: usize, pattern: &str, choice: &str) -> i64 {
-        let abs_diff = end_idx.abs_diff(start_idx);
+        let idx_abs_diff = end_idx.abs_diff(start_idx);
+        let choice_len = choice.chars().count();
+        let pattern_len = pattern.chars().count();
+        let choice_abs_diff = choice_len.abs_diff(pattern_len);
 
-        let close_to_beginning = (choice.len() - start_idx) * 20;
-
-        let first_letter_bonus = if start_idx == 0 { 2000 } else { 0 };
-
-        let pattern_match_size = pattern.len() - abs_diff;
-
-        let group_closeness = if pattern_match_size == 0 {
-            100_000
+        let group_closeness = if idx_abs_diff == 0 {
+            100_000_000
+        } else if idx_abs_diff == 1 {
+            10_000_000
         } else {
-            100_000 / pattern_match_size
+            1_000_000 / idx_abs_diff
         };
 
-        let choice_size = choice.len() * 40;
+        let first_letter_bonus = if start_idx == 0 {
+            1_000_000
+        } else if start_idx == 1 {
+            100_000
+        } else {
+            10_000 / start_idx
+        };
+
+        let total_choice_diff_len = if choice_abs_diff == 0 {
+            100_000
+        } else if choice_abs_diff == 1 {
+            10_000
+        } else {
+            10_000 / choice_abs_diff
+        };
 
         let score: ScoreType =
-            (group_closeness + close_to_beginning + first_letter_bonus - choice_size) as i64;
+            (group_closeness + first_letter_bonus + total_choice_diff_len) as i64;
 
         score
     }
@@ -104,17 +117,14 @@ impl SimpleMatcher {
         let mut pattern_indices: Vec<usize> = Vec::new();
 
         for p_char in pattern.chars() {
-            let byte_idx = choice[skip..]
-                .char_indices()
-                .skip(skip)
-                .find_map(|(idx, c_char)| {
-                    if char_equal(p_char, c_char, case_sensitive) {
-                        skip = idx;
-                        return Some(idx);
-                    }
+            let byte_idx = choice.char_indices().skip(skip).find_map(|(idx, c_char)| {
+                if char_equal(p_char, c_char, case_sensitive) {
+                    skip = idx;
+                    return Some(idx);
+                }
 
-                    None
-                })?;
+                None
+            })?;
             pattern_indices.push(byte_idx);
         }
 
@@ -130,8 +140,10 @@ impl SimpleMatcher {
         pattern: &str,
         case_sensitive: bool,
         start_idx: &mut usize,
+        end_idx: usize,
     ) {
         let mut skip = 0usize;
+        let idx_abs_diff = end_idx.abs_diff(*start_idx);
 
         let mut pattern_indices: Vec<usize> = Vec::new();
 
@@ -155,14 +167,16 @@ impl SimpleMatcher {
             pattern_indices.push(byte_idx);
         }
 
-        let Some(last) = pattern_indices.last() else {
-            return;
-        };
+        if idx_abs_diff > pattern_indices.len() {
+            pattern_indices.reverse();
 
-        let last_as_first = choice.chars().count() - last;
+            let Some(first) = pattern_indices.first() else {
+                return;
+            };
 
-        if last_as_first > *start_idx {
-            *start_idx = last_as_first;
+            if first > start_idx {
+                *start_idx = *first;
+            }
         }
     }
 }
