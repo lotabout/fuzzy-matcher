@@ -951,21 +951,8 @@ impl SkimMatcherV2 {
             return Some((in_place_bonus as ScoreType, vec![match_idx as IndexType]));
         }
 
-        let mut start_idx = first_match_indices[0];
+        let start_idx = first_match_indices[0];
         let end_idx = first_match_indices[first_match_indices.len() - 1];
-
-        let mut pattern_iter = pattern.iter().rev().peekable();
-        for (idx, &c) in choice[start_idx..=end_idx].iter().enumerate().rev() {
-            match pattern_iter.peek() {
-                Some(&&p) => {
-                    if char_equal(c, p, case_sensitive) {
-                        let _ = pattern_iter.next();
-                        start_idx = idx;
-                    }
-                }
-                None => break,
-            }
-        }
 
         Some(self.calculate_score_with_pos(
             choice,

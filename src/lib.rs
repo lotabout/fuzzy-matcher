@@ -1,4 +1,5 @@
 pub mod clangd;
+pub mod clone;
 pub mod skim;
 mod util;
 
