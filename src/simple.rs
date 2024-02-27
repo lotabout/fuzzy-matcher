@@ -121,9 +121,9 @@ impl SimpleMatcher {
         };
 
         let first_letter_bonus = if start_idx == 0 {
-            1_000_000
+            500_000
         } else if idx_abs_diff <= 4 {
-            100_000 / start_idx
+            500_000 / start_idx
         } else {
             0
         };
@@ -204,7 +204,6 @@ impl SimpleMatcher {
         }
 
         assert!(pattern_indices.len() == pattern.chars().count());
-
         assert!(pattern_indices.len() >= 1);
 
         let new_diff = pattern_indices.first().unwrap() - pattern_indices.last().unwrap();
@@ -216,10 +215,8 @@ impl SimpleMatcher {
                 return;
             };
 
-            if first > start_idx {
-                *start_idx = *first;
-                *matches = pattern_indices;
-            }
+            *start_idx = *first;
+            *matches = pattern_indices;
         }
     }
 }
