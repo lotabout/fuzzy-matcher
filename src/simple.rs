@@ -144,15 +144,17 @@ impl SimpleMatcher {
         let mut pattern_indices: Vec<usize> = Vec::with_capacity(pattern_len);
 
         for p_char in pattern.chars() {
-            let byte_idx = choice.char_indices().skip(skip).find_map(|(idx, c_char)| {
+            match choice.char_indices().skip(skip).find_map(|(idx, c_char)| {
                 if char_equal(p_char, c_char, case_sensitive) {
                     skip = idx;
                     return Some(idx);
                 }
 
                 None
-            })?;
-            pattern_indices.push(byte_idx);
+            }) {
+                Some(char_idx) => pattern_indices.push(char_idx),
+                None => return None,
+            }
         }
 
         assert!(pattern_indices.len() == pattern_len);
@@ -180,23 +182,21 @@ impl SimpleMatcher {
         let mut pattern_indices: Vec<usize> = Vec::with_capacity(pattern_len);
 
         for p_char in pattern.chars().rev() {
-            let Some(char_idx) =
-                choice
-                    .char_indices()
-                    .rev()
-                    .skip(skip)
-                    .find_map(|(idx, c_char)| {
-                        if char_equal(p_char, c_char, case_sensitive) {
-                            skip = idx;
-                            return Some(idx);
-                        }
+            match choice
+                .char_indices()
+                .rev()
+                .skip(skip)
+                .find_map(|(idx, c_char)| {
+                    if char_equal(p_char, c_char, case_sensitive) {
+                        skip = idx;
+                        return Some(idx);
+                    }
 
-                        None
-                    })
-            else {
-                return;
-            };
-            pattern_indices.push(char_idx);
+                    None
+                }) {
+                Some(char_idx) => pattern_indices.push(char_idx),
+                None => return,
+            }
         }
 
         assert!(pattern_indices.len() == pattern_len);
