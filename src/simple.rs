@@ -124,7 +124,7 @@ impl SimpleMatcher {
             0
         };
 
-        let choice_len_neg_bonus = 100 * choice_len;
+        let choice_len_neg_bonus = 1_000 * choice_len;
 
         let score: ScoreType = (closeness_score + first_letter_bonus - choice_len_neg_bonus) as i64;
 
