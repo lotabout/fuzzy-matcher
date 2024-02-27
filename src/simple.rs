@@ -82,7 +82,7 @@ impl SimpleMatcher {
             return None;
         }
 
-        let mut matches = Self::forward_matches(choice, pattern, case_sensitive)?;
+        let mut matches = Self::forward_matches(choice, pattern, pattern_len, case_sensitive)?;
 
         let mut start_idx = *matches.first()?;
         let end_idx = *matches.last()?;
@@ -90,6 +90,7 @@ impl SimpleMatcher {
         Self::reverse_matches(
             choice,
             pattern,
+            pattern_len,
             case_sensitive,
             &mut start_idx,
             end_idx,
@@ -135,11 +136,12 @@ impl SimpleMatcher {
     pub fn forward_matches(
         choice: &str,
         pattern: &str,
+        pattern_len: usize,
         case_sensitive: bool,
     ) -> Option<Vec<usize>> {
         let mut skip = 0usize;
 
-        let mut pattern_indices: Vec<usize> = Vec::with_capacity(pattern.len());
+        let mut pattern_indices: Vec<usize> = Vec::with_capacity(pattern_len);
 
         for p_char in pattern.chars() {
             let byte_idx = choice.char_indices().skip(skip).find_map(|(idx, c_char)| {
@@ -153,7 +155,7 @@ impl SimpleMatcher {
             pattern_indices.push(byte_idx);
         }
 
-        assert!(pattern_indices.len() == pattern.chars().count());
+        assert!(pattern_indices.len() == pattern_len);
 
         Some(pattern_indices)
     }
@@ -161,6 +163,7 @@ impl SimpleMatcher {
     pub fn reverse_matches(
         choice: &str,
         pattern: &str,
+        pattern_len: usize,
         case_sensitive: bool,
         start_idx: &mut usize,
         end_idx: usize,
@@ -173,7 +176,7 @@ impl SimpleMatcher {
             return;
         }
 
-        let mut pattern_indices: Vec<usize> = Vec::with_capacity(pattern.len());
+        let mut pattern_indices: Vec<usize> = Vec::with_capacity(pattern_len);
 
         for p_char in pattern.chars().rev() {
             let Some(char_idx) =
@@ -195,7 +198,7 @@ impl SimpleMatcher {
             pattern_indices.push(char_idx);
         }
 
-        assert!(pattern_indices.len() == pattern.chars().count());
+        assert!(pattern_indices.len() == pattern_len);
         assert!(pattern_indices.len() >= 1);
 
         let new_diff = pattern_indices.first().unwrap() - pattern_indices.last().unwrap();
