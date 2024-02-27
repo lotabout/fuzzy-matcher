@@ -29,7 +29,7 @@ pub struct SimpleMatcher {
 impl Default for SimpleMatcher {
     fn default() -> Self {
         SimpleMatcher {
-            case: CaseMatching::Respect,
+            case: CaseMatching::Ignore,
         }
     }
 }
