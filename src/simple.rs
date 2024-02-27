@@ -3,7 +3,7 @@ use crate::FuzzyMatcher;
 use crate::IndexType;
 use crate::ScoreType;
 
-const BASELINE: i64 = 0;
+const BASELINE: i64 = 200_000;
 
 impl FuzzyMatcher for SimpleMatcher {
     fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
@@ -105,6 +105,7 @@ impl SimpleMatcher {
     pub fn score(start_idx: usize, end_idx: usize, pattern: &str, choice: &str) -> i64 {
         let choice_len = choice.chars().count();
         let pattern_len = pattern.chars().count();
+        // imagine pattern.len() = 1, but abs_diff is zero
         let closeness = start_idx.abs_diff(end_idx) - pattern_len + 1;
 
         let closeness_score = if closeness == 0 {
@@ -112,11 +113,11 @@ impl SimpleMatcher {
         } else if closeness >= 4 {
             0
         } else {
-            1_000_000 / closeness
+            2_000_000 / closeness
         };
 
         let first_letter_bonus = if start_idx == 0 {
-            1_000_000
+            200_000
         } else if start_idx <= 4 {
             100_000 / start_idx
         } else {
