@@ -53,29 +53,36 @@ impl SimpleMatcher {
     fn fuzzy(&self, choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
         let case_sensitive = true;
 
-        if choice.len() == 0 {
+        if choice.chars().count() == 0 {
             return None;
         }
 
-        if pattern.len() > choice.len() {
+        if pattern.chars().count() > choice.chars().count() {
             return None;
         }
 
-        if pattern.len() == 0 {
+        if pattern.chars().count() == 0 {
             return Some((0, Vec::new()));
         }
 
-        let forward_matches = Self::forward_matches(choice, pattern, case_sensitive)?;
+        let mut matches = Self::forward_matches(choice, pattern, case_sensitive)?;
 
-        let mut start_idx = *forward_matches.first()?;
-        let end_idx = *forward_matches.last()?;
+        let mut start_idx = *matches.first()?;
+        let end_idx = *matches.last()?;
 
-        Self::reverse_matches(choice, pattern, case_sensitive, &mut start_idx, end_idx);
+        Self::reverse_matches(
+            choice,
+            pattern,
+            case_sensitive,
+            &mut start_idx,
+            end_idx,
+            &mut matches,
+        );
 
         let score = Self::score(start_idx, end_idx, pattern, choice);
 
         if score >= BASELINE {
-            return Some((score, forward_matches));
+            return Some((score, matches));
         }
 
         None
@@ -96,9 +103,9 @@ impl SimpleMatcher {
         };
 
         let first_letter_bonus = if start_idx == 0 {
-            100_000
+            1_000_000
         } else if idx_abs_diff <= 4 {
-            10_000 / start_idx
+            100_000 / start_idx
         } else {
             0
         };
@@ -136,11 +143,9 @@ impl SimpleMatcher {
             pattern_indices.push(byte_idx);
         }
 
-        if pattern_indices.len() == pattern.chars().count() {
-            return Some(pattern_indices);
-        }
+        assert!(pattern_indices.len() == pattern.chars().count());
 
-        None
+        Some(pattern_indices)
     }
 
     pub fn reverse_matches(
@@ -149,14 +154,19 @@ impl SimpleMatcher {
         case_sensitive: bool,
         start_idx: &mut usize,
         end_idx: usize,
+        matches: &mut Vec<usize>,
     ) {
         let mut skip = 0usize;
         let idx_abs_diff = end_idx.abs_diff(*start_idx);
 
+        if idx_abs_diff == 0 {
+            return;
+        }
+
         let mut pattern_indices: Vec<usize> = Vec::new();
 
         for p_char in pattern.chars().rev() {
-            let Some(byte_idx) =
+            let Some(char_idx) =
                 choice
                     .char_indices()
                     .rev()
@@ -172,10 +182,16 @@ impl SimpleMatcher {
             else {
                 return;
             };
-            pattern_indices.push(byte_idx);
+            pattern_indices.push(char_idx);
         }
 
-        if idx_abs_diff > pattern_indices.len() {
+        assert!(pattern_indices.len() == pattern.chars().count());
+
+        assert!(pattern_indices.len() >= 1);
+
+        let new_diff = pattern_indices.first().unwrap() - pattern_indices.last().unwrap();
+
+        if idx_abs_diff > new_diff {
             pattern_indices.reverse();
 
             let Some(first) = pattern_indices.first() else {
@@ -184,6 +200,7 @@ impl SimpleMatcher {
 
             if first > start_idx {
                 *start_idx = *first;
+                *matches = pattern_indices;
             }
         }
     }
