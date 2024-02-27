@@ -29,7 +29,7 @@ pub struct SimpleMatcher {
 impl Default for SimpleMatcher {
     fn default() -> Self {
         SimpleMatcher {
-            case: CaseMatching::Smart,
+            case: CaseMatching::Respect,
         }
     }
 }
@@ -50,8 +50,26 @@ impl SimpleMatcher {
         self
     }
 
+    fn contains_upper(&self, string: &str) -> bool {
+        for ch in string.chars() {
+            if ch.is_ascii_uppercase() {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn is_case_sensitive(&self, pattern: &str) -> bool {
+        match self.case {
+            CaseMatching::Respect => true,
+            CaseMatching::Ignore => false,
+            CaseMatching::Smart => self.contains_upper(pattern),
+        }
+    }
+
     fn fuzzy(&self, choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
-        let case_sensitive = true;
+        let case_sensitive = self.is_case_sensitive(pattern);
 
         if choice.chars().count() == 0 {
             return None;
