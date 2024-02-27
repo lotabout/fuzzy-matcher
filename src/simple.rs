@@ -3,7 +3,7 @@ use crate::FuzzyMatcher;
 use crate::IndexType;
 use crate::ScoreType;
 
-const BASELINE: i64 = 100_000;
+const BASELINE: i64 = 0;
 
 impl FuzzyMatcher for SimpleMatcher {
     fn fuzzy_indices(&self, choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
@@ -71,16 +71,12 @@ impl SimpleMatcher {
     fn fuzzy(&self, choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
         let case_sensitive = self.is_case_sensitive(pattern);
 
-        if choice.chars().count() == 0 {
-            return None;
-        }
-
-        if pattern.chars().count() > choice.chars().count() {
-            return None;
-        }
-
         if pattern.chars().count() == 0 {
             return Some((0, Vec::new()));
+        }
+
+        if choice.chars().count() == 0 {
+            return None;
         }
 
         let mut matches = Self::forward_matches(choice, pattern, case_sensitive)?;
@@ -107,35 +103,29 @@ impl SimpleMatcher {
     }
 
     pub fn score(start_idx: usize, end_idx: usize, pattern: &str, choice: &str) -> i64 {
-        let idx_abs_diff = end_idx.abs_diff(start_idx);
         let choice_len = choice.chars().count();
         let pattern_len = pattern.chars().count();
-        let choice_abs_diff = choice_len.abs_diff(pattern_len);
+        let closeness = start_idx.abs_diff(end_idx) - pattern_len + 1;
 
-        let group_closeness = if idx_abs_diff == 0 {
+        let closeness_score = if closeness == 0 {
             10_000_000
-        } else if idx_abs_diff >= 4 {
+        } else if closeness >= 4 {
             0
         } else {
-            1_000_000 / idx_abs_diff
+            1_000_000 / closeness
         };
 
         let first_letter_bonus = if start_idx == 0 {
-            500_000
-        } else if idx_abs_diff <= 4 {
-            500_000 / start_idx
+            1_000_000
+        } else if start_idx <= 4 {
+            100_000 / start_idx
         } else {
             0
         };
 
-        let total_choice_diff_len = if choice_abs_diff == 0 {
-            100_000
-        } else {
-            10_000 / choice_abs_diff
-        };
+        let choice_len_neg_bonus = 100 * choice_len;
 
-        let score: ScoreType =
-            (group_closeness + first_letter_bonus + total_choice_diff_len) as i64;
+        let score: ScoreType = (closeness_score + first_letter_bonus - choice_len_neg_bonus) as i64;
 
         score
     }
@@ -175,7 +165,7 @@ impl SimpleMatcher {
         matches: &mut Vec<usize>,
     ) {
         let mut skip = 0usize;
-        let idx_abs_diff = end_idx.abs_diff(*start_idx);
+        let idx_abs_diff = start_idx.abs_diff(end_idx);
 
         if idx_abs_diff == 0 {
             return;
