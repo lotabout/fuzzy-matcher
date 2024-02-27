@@ -71,11 +71,14 @@ impl SimpleMatcher {
     fn fuzzy(&self, choice: &str, pattern: &str) -> Option<(ScoreType, Vec<IndexType>)> {
         let case_sensitive = self.is_case_sensitive(pattern);
 
-        if pattern.chars().count() == 0 {
+        let choice_len = choice.chars().count();
+        let pattern_len = pattern.chars().count();
+
+        if pattern_len == 0 {
             return Some((0, Vec::new()));
         }
 
-        if choice.chars().count() == 0 {
+        if choice_len == 0 {
             return None;
         }
 
@@ -93,7 +96,7 @@ impl SimpleMatcher {
             &mut matches,
         );
 
-        let score = Self::score(start_idx, end_idx, pattern, choice);
+        let score = Self::score(start_idx, end_idx, pattern_len, choice_len);
 
         if score >= BASELINE {
             return Some((score, matches));
@@ -102,9 +105,7 @@ impl SimpleMatcher {
         None
     }
 
-    pub fn score(start_idx: usize, end_idx: usize, pattern: &str, choice: &str) -> i64 {
-        let choice_len = choice.chars().count();
-        let pattern_len = pattern.chars().count();
+    pub fn score(start_idx: usize, end_idx: usize, pattern_len: usize, choice_len: usize) -> i64 {
         // imagine pattern.len() = 1, but abs_diff is zero
         let closeness = start_idx.abs_diff(end_idx) - pattern_len + 1;
 
@@ -138,7 +139,7 @@ impl SimpleMatcher {
     ) -> Option<Vec<usize>> {
         let mut skip = 0usize;
 
-        let mut pattern_indices: Vec<usize> = Vec::new();
+        let mut pattern_indices: Vec<usize> = Vec::with_capacity(pattern.len());
 
         for p_char in pattern.chars() {
             let byte_idx = choice.char_indices().skip(skip).find_map(|(idx, c_char)| {
@@ -172,7 +173,7 @@ impl SimpleMatcher {
             return;
         }
 
-        let mut pattern_indices: Vec<usize> = Vec::new();
+        let mut pattern_indices: Vec<usize> = Vec::with_capacity(pattern.len());
 
         for p_char in pattern.chars().rev() {
             let Some(char_idx) =
