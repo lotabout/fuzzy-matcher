@@ -169,12 +169,13 @@ impl SimpleMatcher {
         end_idx: usize,
         matches: &mut Vec<usize>,
     ) {
-        let mut skip = 0usize;
         let idx_abs_diff = start_idx.abs_diff(end_idx);
 
         if idx_abs_diff == 0 {
             return;
         }
+
+        let mut skip = 0usize;
 
         let mut pattern_indices: Vec<usize> = Vec::with_capacity(pattern_len);
 
